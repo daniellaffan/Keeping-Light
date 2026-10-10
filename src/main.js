@@ -14,6 +14,8 @@ import { HeadlandMapScene } from './render/scenes/headland-map.js';
 import { VignetteScene } from './render/scenes/village.js';
 import { FinaleScene } from './render/scenes/finale.js';
 import { DebugPanel } from './ui/debug.js';
+import { SoundControl } from './ui/settings.js';
+import { createAudio } from './audio/audio.js';
 
 const params = new URLSearchParams(location.search);
 const DEBUG = params.get('debug') === '1';
@@ -158,6 +160,19 @@ game.scenes.daymap = new HeadlandMapScene(game);
 game.scenes.vignette = new VignetteScene(game);
 game.scenes.finale = new FinaleScene(game);
 if (DEBUG) game.debugPanel = new DebugPanel(game);
+game.soundControl = new SoundControl(game);
+
+// Audio starts on the first gesture (browsers require it) and never blocks the game if it fails.
+game.startAudio = () => {
+  try {
+    if (!game.audio) game.audio = createAudio(game);
+    game.audio?.start();
+    if (document.hidden) game.audio?.suspend();
+  } catch (err) { console.warn('audio unavailable', err); game.audio = null; }
+};
+const firstGesture = () => { game.startAudio(); window.removeEventListener('pointerdown', firstGesture, true); window.removeEventListener('keydown', firstGesture, true); };
+window.addEventListener('pointerdown', firstGesture, true);
+window.addEventListener('keydown', firstGesture, true);
 if (AUTOPLAY) game.timeScale = parseFloat(params.get('speed') || '4');
 
 // ---------------- sizing ----------------

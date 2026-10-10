@@ -29,6 +29,25 @@
     font-family: "Cormorant Garamond", Georgia, serif; font-style: italic; font-size: 20px; color: #6b6156;
     background: #F2EAD9; transition: opacity 1.2s ease; pointer-events: none;
   }
+  #sound { position: fixed; top: 10px; right: 10px; z-index: 9; font-family: "Caveat", "Segoe Print", cursive; color: #2B2733; }
+  #sound .toggle {
+    width: 40px; height: 40px; border-radius: 50%; border: 0; padding: 0; cursor: pointer; color: inherit;
+    background: radial-gradient(circle at 45% 40%, rgba(246,240,226,0.92), rgba(232,222,200,0.75));
+    box-shadow: 0 0 0 1px rgba(60,50,40,0.18); opacity: 0.6; transition: opacity .3s;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #sound .toggle:hover, #sound.open .toggle { opacity: 1; }
+  #sound.muted .toggle { opacity: 0.45; }
+  #sound .panel {
+    display: none; position: absolute; right: 0; top: 46px; padding: 10px 14px; min-width: 170px;
+    background: rgba(244,237,222,0.96); border-radius: 6px; box-shadow: 0 1px 0 rgba(60,50,40,0.15), 0 4px 18px rgba(40,30,20,0.12);
+    font-size: 21px;
+  }
+  #sound.open .panel { display: block; }
+  #sound .row { display: flex; align-items: center; gap: 8px; margin: 4px 0; cursor: pointer; }
+  #sound input[type=range] { width: 110px; accent-color: #3B4A6B; }
+  #sound input[type=checkbox] { accent-color: #3B4A6B; width: 16px; height: 16px; }
+  @media (pointer: coarse) { #sound .toggle { width: 46px; height: 46px; } #sound input[type=range] { width: 140px; } }
   #debug {
     position: fixed; left: 8px; bottom: 8px; z-index: 10; display: none;
     font: 11px/1.4 ui-monospace, Menlo, monospace; color: #F2EAD9; background: rgba(30,28,34,0.82);

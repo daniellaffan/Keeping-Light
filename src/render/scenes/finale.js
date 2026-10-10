@@ -29,6 +29,7 @@ export class FinaleScene {
     this.lastTap = -9;
     this.stepTime = {};
     this.leaving = false;
+    this.held = false;
     this.ship = { name: 'Réalta', size: 'small', index: 3, pos: [22, 47], dir: [1, -0.5], trail: [], lantern: 1, fade: 1, bob: 1.4 };
     if (part === 'sunset') this.game.audio?.lampSwell?.();
   }
@@ -91,6 +92,7 @@ export class FinaleScene {
       this.ship.dir = [this.ship.pos[0] - prev[0] || 1, this.ship.pos[1] - prev[1]];
       this.ship.fade = 1 - smooth(25, 31, this.t);
       this.ship.lantern = 1 - smooth(27, 31, this.t) * 0.8;
+      if (this.t > 31 && !this.held) { this.held = true; g.audio?.heldNote?.(); }
       if (this.t > 41 && !this.leaving) { this.leaving = true; g.go('finale', { part: 'end' }, { duration: 2.4 }); }
     } else if (this.part === 'end') {
       if ((g.autoplay && this.t > 4) || this.t > 30) this.leave();
