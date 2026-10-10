@@ -11,7 +11,7 @@ export class DebugPanel {
     this.el.innerHTML = `<div class="info"></div>
       <select class="night">${NIGHTS.map((n) => `<option value="${n.id}">${n.epilogue ? 'E' + n.epilogue : 'Night ' + n.id}</option>`).join('')}<option value="finale">finale</option></select>
       <select class="phase"><option>day</option><option>dusk</option><option>night</option><option>dawn</option></select>
-      <button class="go">go</button><button class="next">N</button><button class="ff">F ×8</button><button class="auto">A</button>`;
+      <button class="go">go</button><button class="next">N</button><button class="ff">F ×8</button><button class="auto">A</button><button class="hide">hide</button>`;
     this.info = this.el.querySelector('.info');
     const nightSel = this.el.querySelector('.night'), phaseSel = this.el.querySelector('.phase');
     this.el.querySelector('.go').onclick = () => {
@@ -21,6 +21,11 @@ export class DebugPanel {
     this.el.querySelector('.next').onclick = () => this.nextPhase();
     this.el.querySelector('.ff').onclick = () => this.fast();
     this.el.querySelector('.auto').onclick = () => this.auto();
+    this.el.querySelector('.hide').onclick = () => {
+      this.small = !this.small;
+      this.info.style.display = this.small ? 'none' : '';
+      this.el.querySelector('.hide').textContent = this.small ? 'show' : 'hide';
+    };
     // keep clicks on the panel from reaching the game
     this.el.addEventListener('pointerdown', (e) => e.stopPropagation());
 

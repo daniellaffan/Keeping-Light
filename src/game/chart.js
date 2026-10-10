@@ -81,6 +81,7 @@ export const REEFS = {
   newrock: { name: '', tide: 'always', poly: ell(52, 43.5, 2.4, 1.8, 12, 0.3, 0.18, 11) },
   narrows: { name: 'the Knuckles', tide: 'mid', poly: chain(28, 22, 30, 15, 1.4, 4, 2) },
   spit: { name: 'the Spit', tide: 'always', poly: chain(84, 26, 92, 23, 1.4, 4, 8) },
+  rakes: { name: 'the Rakes', tide: 'always', poly: chain(45.4, 3.5, 46.6, 19.8, 0.95, 6, 4) },
 };
 
 export function reefActive(reef, tide) {

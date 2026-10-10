@@ -139,7 +139,10 @@ export function drawShip(L, s, pal, t, { lag = 0, fleet = null, dark = 0.7, alph
 
 // ---------------- the scene ----------------
 export class BayScene {
-  constructor(game) { this.game = game; this.safe = SAFE; }
+  constructor(game) {
+    this.game = game; this.safe = SAFE;
+    game.input.on('down', (x, y) => { if (game.scene === this) this.pointer(x, y); });
+  }
 
   enter({ mode = 'night', night, waypoints = [], from = 'dusk' }) {
     this.mode = mode;

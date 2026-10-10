@@ -23,7 +23,7 @@ export const KEEPER_NOTES = {
     dawn: 'Three home. Best night yet.',
   },
   6: {
-    dusk: 'Haar came in off the sea at four, thick as wool. The beam barely reaches the water.',
+    dusk: 'Haar came in off the sea at four, thick as wool. The beam barely reaches the water. The Rakes are showing across the north channel — the long way round tonight.',
     dawn: 'All in, in spite of it. Fog is only weather.',
   },
   7: {

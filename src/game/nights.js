@@ -51,7 +51,7 @@ const RAW = [
   // ---------------- Act Two ----------------
   {
     id: 6, act: 2, date: '7 September', tide: 'mid', weather: 'haar', haar: 0.45,
-    ships: ['The Curlew', 'Fáinne Óir', 'Morning Lark'], entries: [[0, 38]], reefs: [...base, 'tooth', 'comb'],
+    ships: ['The Curlew', 'Fáinne Óir', 'Morning Lark'], entries: [[0, 38]], reefs: [...base, 'tooth', 'comb', 'rakes'],
     maxPoints: 5, inkBudget: 140,
     day: { places: ['harbour', 'cliff', 'lighthouse'], focus: 'harbour' }, lights: 1, drift: 0.1,
     look: look({ warmth: 0.32, sat: 0.97, paperShow: 0.11, bleed: 0.08, inkSpread: 0.12, cool: 0.18 }), music: 2,
@@ -65,7 +65,7 @@ const RAW = [
   },
   {
     id: 8, act: 2, date: '9 September', tide: 'high', weather: 'rain', haar: 0,
-    ships: ['Faithful', 'Caoimhe', 'Shearwater'], entries: [[0, 44]], reefs: [...base, 'tooth', 'comb', 'narrows', 'spit'],
+    ships: ['Faithful', 'Caoimhe', 'Shearwater'], entries: [[0, 44]], reefs: [...base, 'tooth', 'comb', 'narrows', 'spit', 'rakes'],
     maxPoints: 5, inkBudget: 140,
     day: { places: ['lighthouse', 'village'], focus: 'lighthouse' }, lights: 1, drift: 0.15,
     look: look({ warmth: 0.15, sat: 0.9, paperShow: 0.14, bleed: 0.16, inkSpread: 0.25, cool: 0.32 }), music: 2,
@@ -90,8 +90,8 @@ const RAW = [
   {
     id: 11, act: 2, date: '12 September', tide: 'mid', weather: 'haar', haar: 0.65,
     ships: ['The Gannet', 'Homeward', 'Neasa', 'Mo Stór'], entries: [[0, 38]],
-    reefs: [...base, 'tooth', 'comb', 'newrock'],
-    maxPoints: 6, inkBudget: 145,
+    reefs: [...base, 'tooth', 'comb', 'newrock', 'rakes'],
+    maxPoints: 7, inkBudget: 145,
     day: { places: ['village', 'harbour', 'lighthouse'], focus: 'village' }, lights: 0.55, drift: 0.24,
     look: look({ warmth: -0.08, sat: 0.8, paperShow: 0.2, bleed: 0.3, inkSpread: 0.42, cool: 0.55 }), music: 2,
   },
@@ -116,8 +116,8 @@ const RAW = [
   {
     id: 14, act: 3, date: '15 September', tide: 'high', weather: 'grey', haar: 0.2,
     ships: ['Brightwater', 'Bríd Óg', 'Patience'], entries: [[0, 42]],
-    reefs: [...base, 'tooth', 'spit', 'newrock', 'comb'],
-    maxPoints: 6, inkBudget: 145,
+    reefs: [...base, 'tooth', 'spit', 'newrock', 'comb', 'rakes'],
+    maxPoints: 7, inkBudget: 145,
     day: { places: ['school', 'cottages', 'lighthouse'], focus: 'school' }, lights: 0.2, drift: 0.38,
     revealPages: 'others',
     anomalies: [{ type: 'allLag', lag: 0.35 }],
