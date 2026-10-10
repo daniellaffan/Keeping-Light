@@ -12,6 +12,8 @@ import { TitleScene } from './render/scenes/title.js';
 import { LogbookScene } from './render/scenes/logbook.js';
 import { HeadlandMapScene } from './render/scenes/headland-map.js';
 import { VignetteScene } from './render/scenes/village.js';
+import { FinaleScene } from './render/scenes/finale.js';
+import { DebugPanel } from './ui/debug.js';
 
 const params = new URLSearchParams(location.search);
 const DEBUG = params.get('debug') === '1';
@@ -31,7 +33,7 @@ const input = new Input(canvas, layers);
 
 const LOOK_DEFAULT = {
   warmth: 0.4, sat: 1, paperShow: 0.1, bleed: 0, fog: 0, wobble: 3, gran: 0.75, edge: 1, inkSpread: 0,
-  fogColor: [0.86, 0.86, 0.84], lightGain: 1, cloakAmt: 0, clearAmt: 0, white: 0,
+  fogColor: [0.86, 0.86, 0.84], lightGain: 1, cloakAmt: 0, clearAmt: 0, white: 0, inkOut: 0,
 };
 
 export const game = {
@@ -154,6 +156,9 @@ game.scenes.title = new TitleScene(game);
 game.scenes.logbook = new LogbookScene(game);
 game.scenes.daymap = new HeadlandMapScene(game);
 game.scenes.vignette = new VignetteScene(game);
+game.scenes.finale = new FinaleScene(game);
+if (DEBUG) game.debugPanel = new DebugPanel(game);
+if (AUTOPLAY) game.timeScale = parseFloat(params.get('speed') || '4');
 
 // ---------------- sizing ----------------
 function resize() {
@@ -182,7 +187,7 @@ function applyLook(dt) {
       if (key === 'cloak' || key === 'clear') { u[key] = v.slice(); continue; }
       u[key] = (u[key] || v).map((x, i) => x + (v[i] - x) * k);
     } else if (typeof v === 'number') {
-      if (key === 'white' || key === 'cloakAmt' || key === 'clearAmt') u[key] = v;
+      if (key === 'white' || key === 'cloakAmt' || key === 'clearAmt' || key === 'inkOut') u[key] = v;
       else u[key] = (u[key] ?? v) + (v - (u[key] ?? v)) * k;
     }
   }
@@ -265,7 +270,10 @@ async function boot() {
 
   const id = parseInt(params.get('night') || '0', 10);
   const phase = params.get('phase');
-  if (DEBUG && id) {
+  if (DEBUG && params.get('finale')) {
+    game.night = nightById(LAST_NIGHT);
+    game.go('finale', { part: params.get('finale') }, { transition: 'none' });
+  } else if (DEBUG && id) {
     game.state = Store.freshProgress();
     game.startNight(id, phase || 'day');
   } else if (game.scenes.title) {

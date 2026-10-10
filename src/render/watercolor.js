@@ -74,6 +74,7 @@ uniform vec4 uClear;        // a hole in the haar (uv x,y, rx, ry)
 uniform float uClearAmt;
 uniform float uSeed;
 uniform float uLightGain;
+uniform float uInkOut;     // 1: ink on the bare paper outside the painting still shows
 
 float hash(vec2 p) {
   p = fract(p * vec2(123.34, 456.21) + uSeed);
@@ -220,6 +221,8 @@ void main() {
   float rim = smoothstep(0.0, 3.0, dEdge - rag) * (1.0 - smoothstep(3.0, 18.0, dEdge - rag));
   col = density(col, 1.0 + rim * 0.22);
   col = mix(paperCol, col, inside);
+  // ink written on the bare paper outside the painting still shows
+  col = mix(col, ink.rgb * mix(vec3(1.0), paperCol, 0.3), clamp(inkA, 0.0, 1.0) * (1.0 - inside) * uInkOut);
 
   // ---- vignette + grain ----
   vec2 vq = (vUv - 0.5) * vec2(aspect, 1.0);
@@ -268,7 +271,7 @@ export class Watercolor {
     this.hasPrev = false;
     this.u = {
       warmth: 0.4, sat: 1.0, paperShow: 0.1, bleed: 0.0, fog: 0.0, wobble: 3.0, gran: 0.7, edge: 1.0,
-      inkSpread: 0.0, fogColor: [0.86, 0.86, 0.84], wind: [1, 0.15], lightGain: 1.0,
+      inkSpread: 0.0, fogColor: [0.86, 0.86, 0.84], wind: [1, 0.15], lightGain: 1.0, inkOut: 0.0,
       trans: 1.0, transCenter: [0.5, 0.5], white: 0.0, whiteCenter: [0.5, 0.5],
       margin: [0.012, 0.016, 0.988, 0.984],
       cloak: [0.5, 0.5, 0.05, 0.2], cloakAmt: 0, clear: [0.5, 0.5, 0.1, 0.1], clearAmt: 0,
@@ -358,6 +361,7 @@ export class Watercolor {
     gl.uniform1f(U.uEdge, u.edge);
     gl.uniform1f(U.uInkSpread, u.inkSpread);
     gl.uniform1f(U.uLightGain, u.lightGain);
+    gl.uniform1f(U.uInkOut, u.inkOut);
     gl.uniform3fv(U.uFogColor, u.fogColor);
     gl.uniform2fv(U.uWind, u.wind);
     gl.uniform4fv(U.uMargin, u.margin);
