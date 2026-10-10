@@ -8,6 +8,7 @@ import { NIGHTS, nightById, LAST_NIGHT } from './game/nights.js';
 import * as Store from './state.js';
 import { BayScene } from './render/scenes/bay.js';
 import { solve } from './game/chart.js';
+import { Fleet } from './game/ships.js';
 import { TitleScene } from './render/scenes/title.js';
 import { LogbookScene } from './render/scenes/logbook.js';
 import { HeadlandMapScene } from './render/scenes/headland-map.js';
@@ -89,7 +90,17 @@ export const game = {
     this.phase = phase;
     if (phase === 'dusk') return this.toDusk();
     if (phase === 'night') return this.inkPlan(this.state.history[id]?.waypoints || this.solveFor(this.night));
-    if (phase === 'dawn') { this.lastResults = this.state.history[id]?.results || null; return this.onNightOver(this.lastResults || [], true); }
+    if (phase === 'dawn') {
+      // jumping straight to dawn (debug): sail the default plan so the record has something to say
+      const h = (this.state.history[id] ||= {});
+      if (!h.results) {
+        h.waypoints ||= this.solveFor(this.night);
+        const fleet = new Fleet(this.night, h.waypoints);
+        for (let i = 0; i < 20000 && !fleet.done; i++) fleet.update(0.1);
+        h.results = fleet.results();
+      }
+      return this.onNightOver(h.results, true);
+    }
     if (this.night.day.arrival && this.scenes.vignette) this.go('vignette', { place: 'arrival' });
     else if (this.scenes.daymap) this.go('daymap', {});
     else this.toDusk();

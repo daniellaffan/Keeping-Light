@@ -128,3 +128,15 @@ export const PAGE_WORDS = {
   tides: { high: 'high water', mid: 'half tide', low: 'low water' },
   weathers: { clear: 'clear', rain: 'soft rain', haar: 'haar', grey: 'grey, still', still: 'still' },
 };
+
+// The dawn watch line under the chart: lamp hours (sunset to sunrise, early-mid September, summer time),
+// and the oil. It thins out with the acts.
+export function watchLines(n) {
+  if (!n.date) return n.epilogue === 3 ? ['lit.'] : ['Lit at dusk. Out at light.'];
+  const day = parseInt(n.date, 10) - 2;
+  const lit = 20 * 60 + 21 - Math.round(day * 2.5), out = 6 * 60 + 50 + Math.round(day * 1.6);
+  const hm = (m) => `${Math.floor(m / 60) % 12 || 12}.${String(m % 60).padStart(2, '0')}`;
+  const first = `Lit ${hm(lit)} pm. Out ${hm(out)} am.`;
+  const oil = n.act === 1 ? 'Oil, two gallons. Wick trimmed at midnight.' : n.act === 2 ? 'Oil, two gallons.' : n.act === 3 ? 'Oil.' : '';
+  return oil ? [first, oil] : [first];
+}

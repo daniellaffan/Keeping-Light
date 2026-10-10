@@ -7,7 +7,7 @@ import {
 } from '../../game/chart.js';
 import { nightById, NIGHTS } from '../../game/nights.js';
 import { INSIDE_COVER, OLD_KEEPER, OTHER_KEEPERS, BARGAIN } from '../../data/story-logbook.js';
-import { KEEPER_NOTES, TEACH, STRUCK_FOLLOWUP, RECORD, SPECIAL_RECORDS, PAGE_WORDS } from '../../data/story-nights.js';
+import { KEEPER_NOTES, TEACH, STRUCK_FOLLOWUP, RECORD, SPECIAL_RECORDS, PAGE_WORDS, watchLines } from '../../data/story-nights.js';
 
 const SPREAD = { w: 1600, h: 1000 };
 const SINGLE = { w: 860, h: 1240 };
@@ -719,7 +719,26 @@ export class LogbookScene {
       } else this.hoverOld = false;
       this.drawTeach(L, R, f);
       if (this.flash) letter(ink, this.flash.text, f.x0 + f.w / 2, f.y0 - 14, { hand: 'pencil', size: 24, align: 'center', color: '#7A2E22', alpha: 0.85 * (1 - smooth(2.2, 3, this.flash.t)) });
+    } else this.drawWatch(L, R, f);
+  }
+
+  // dawn: the watch kept, and a little row of boats — one for each that came in
+  drawWatch(L, R, f) {
+    const n = this.night, ink = L.ink;
+    const a = smooth(0.8, 2, this.t);
+    const x = R.x + 76;
+    let y = f.y1 + 82;
+    const drift = n.drift || 0;
+    for (const line of watchLines(n)) {
+      letter(ink, line, x, y, { hand: 'keeper', size: 30, alpha: 0.8 * a, drift: drift * 2, shake: drift, seed: y });
+      y += 46;
     }
+    (this.game.lastResults || []).forEach((r, i) => {
+      const bx = x + 22 + i * 66, by = y + 52;
+      const gone = r.fate === 'gone';
+      boatGlyph(ink, bx, by, r.size || 'medium', (gone ? 0.45 : 0.8) * a, gone ? OLD_INK : '#2A3040');
+      if (r.fate === 'struck') cross(ink, bx, by - 8, 9, 0.8 * a, '#7A2E22');
+    });
   }
 
   drawTeach(L, R, f) {
