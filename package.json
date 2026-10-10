@@ -1,0 +1,7 @@
+{
+  "name": "the-keeping-light",
+  "private": true,
+  "type": "module",
+  "description": "No build step. Serve this folder statically. This file only lets node run tools/*.mjs against src/.",
+  "scripts": { "check": "node tools/check-nights.mjs", "serve": "python3 -m http.server 8000" }
+}

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>The Keeping Light</title>
+<meta name="description" content="A slow watercolor game about a lighthouse keeper on a headland in the west of Ireland.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;600&family=Cormorant+Garamond:ital,wght@0,400;0,500;1,400&family=Homemade+Apple&family=La+Belle+Aurore&family=Cedarville+Cursive&family=Mrs+Saint+Delafield&display=swap" rel="stylesheet">
+<style>
+  html, body {
+    margin: 0; padding: 0; height: 100%; overflow: hidden;
+    background: #F2EAD9; color: #2B2622;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #stage { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; }
+  #fallback {
+    position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    padding: 24px; text-align: center; box-sizing: border-box;
+    font-family: "Cormorant Garamond", Georgia, serif; font-size: 22px; line-height: 1.5;
+    background: radial-gradient(ellipse at 50% 45%, #F6F0E2 0%, #F2EAD9 55%, #E6DBC4 100%);
+  }
+  #fallback p { max-width: 30em; }
+  #fallback em { font-family: "Caveat", cursive; font-style: normal; font-size: 1.3em; }
+  #loading {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-family: "Cormorant Garamond", Georgia, serif; font-style: italic; font-size: 20px; color: #6b6156;
+    background: #F2EAD9; transition: opacity 1.2s ease; pointer-events: none;
+  }
+  #debug {
+    position: fixed; left: 8px; bottom: 8px; z-index: 10; display: none;
+    font: 11px/1.4 ui-monospace, Menlo, monospace; color: #F2EAD9; background: rgba(30,28,34,0.82);
+    padding: 8px 10px; border-radius: 4px; max-width: 360px; white-space: pre-wrap; pointer-events: auto;
+  }
+  #debug select, #debug button { font: 11px ui-monospace, Menlo, monospace; margin: 2px 2px 0 0; }
+</style>
+</head>
+<body>
+<canvas id="stage" tabindex="0" aria-label="The Keeping Light — game canvas"></canvas>
+<div id="loading">a moment…</div>
+<div id="fallback"><p>The page couldn't open a painting surface here — this game needs <b>WebGL2</b>,
+which this browser or device doesn't seem to offer.<br><br><em>Try a recent Chrome, Firefox, Safari or Edge on a desktop or laptop.</em></p></div>
+<div id="debug"></div>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
