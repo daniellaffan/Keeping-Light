@@ -22,7 +22,7 @@ export function bayBackdrop(L, game, { tod, night, extraReefs = [], key = '', vi
 }
 
 export function fogColorFor(tod) {
-  if (tod === 'night') return [0.46, 0.48, 0.55];
+  if (tod === 'night') return [0.6, 0.62, 0.68];
   if (tod === 'dawn') return [0.9, 0.88, 0.85];
   if (tod === 'dusk' || tod === 'title') return [0.83, 0.78, 0.78];
   return [0.9, 0.9, 0.88];

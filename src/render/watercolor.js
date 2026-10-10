@@ -165,11 +165,14 @@ void main() {
   float fogD = 0.0;
   float f2 = 0.5;
   if (uFog > 0.001 || uCloakAmt > 0.001) {
-    vec2 fogP = pp * 0.0026;
+    // banks: wide and low (stretched across the screen), with thinner places between them
+    vec2 fogP = pp * vec2(0.0016, 0.0044);
     float f1 = fbm(fogP + uWind * uTime * 0.018);
     f2 = fbm3(fogP * 2.3 - uWind.yx * uTime * 0.011 + 4.0);
+    float wisp = vnoise(pp * vec2(0.0035, 0.03) + vec2(uTime * 0.05, 0.0));
     float fogW = mix(0.35, 1.0, msk.g);
-    fogD = uFog * fogW * clamp(0.35 + 0.9 * (f1 * 0.7 + f2 * 0.45 - 0.42), 0.0, 1.0);
+    float bank = smoothstep(0.36, 0.8, f1 * 0.72 + f2 * 0.42 + wisp * 0.12);
+    fogD = uFog * fogW * clamp(0.2 + 0.95 * bank, 0.0, 1.0);
     if (uCloakAmt > 0.001) {
       // the cloak: mist that moves against the wind
       vec2 cd = (vUv - uCloak.xy) / max(uCloak.zw, vec2(1e-4));
