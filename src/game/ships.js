@@ -109,6 +109,6 @@ export class Fleet {
 
   get done() { return this.doneAt != null; }
   results() {
-    return this.ships.map((s) => ({ name: s.name, size: s.size, fate: s.struck ? 'struck' : this.toMagMell ? 'gone' : 'home', reef: s.sim.struck ? s.sim.struck.obstacle : null }));
+    return this.ships.map((s) => ({ name: s.name, size: s.size, fate: s.struck ? 'struck' : this.toMagMell ? 'gone' : 'home', reef: s.sim.struck ? s.sim.struck.obstacle : null, at: s.sim.struck ? s.sim.struck.at.map((v) => Math.round(v * 10) / 10) : null }));
   }
 }

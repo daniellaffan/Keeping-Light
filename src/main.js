@@ -9,6 +9,9 @@ import * as Store from './state.js';
 import { BayScene } from './render/scenes/bay.js';
 import { solve } from './game/chart.js';
 import { TitleScene } from './render/scenes/title.js';
+import { LogbookScene } from './render/scenes/logbook.js';
+import { HeadlandMapScene } from './render/scenes/headland-map.js';
+import { VignetteScene } from './render/scenes/village.js';
 
 const params = new URLSearchParams(location.search);
 const DEBUG = params.get('debug') === '1';
@@ -148,6 +151,9 @@ window.__game = game;
 
 game.scenes.bay = new BayScene(game);
 game.scenes.title = new TitleScene(game);
+game.scenes.logbook = new LogbookScene(game);
+game.scenes.daymap = new HeadlandMapScene(game);
+game.scenes.vignette = new VignetteScene(game);
 
 // ---------------- sizing ----------------
 function resize() {
@@ -189,6 +195,12 @@ function frame(now) {
   if (!running) return;
   let dt = Math.min(0.05, (now - last) / 1000);
   last = now;
+  if (!step(dt)) return;
+  requestAnimationFrame(frame);
+}
+
+// One tick: update, paint the layers, composite. Exposed in debug mode so tests can drive time directly.
+function step(dt) {
   dt *= game.timeScale;
   game.time += dt;
   try {
@@ -215,10 +227,11 @@ function frame(now) {
     console.error(err);
     running = false;
     showCrash(err);
-    return;
+    return false;
   }
-  requestAnimationFrame(frame);
+  return true;
 }
+if (DEBUG) game.step = (n = 1, dt = 0.05) => { for (let i = 0; i < n; i++) if (!step(dt)) return false; return game.sceneName + ' ' + game.phase; };
 
 function defaultPaintRect(L) {
   const s = L.safe;
