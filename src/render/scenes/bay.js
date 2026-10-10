@@ -1,5 +1,5 @@
 // The bay seen from the headland: night (ships come home), dawn, and backdrops for dusk/title.
-import { PAL, rng, noise1, mixHex, rgba, lerp, clamp, smooth, blob, glow, inkLine, wobble, trace, wash } from '../paint.js';
+import { PAL, rng, noise1, mixHex, rgba, lerp, clamp, smooth, blob, glow, inkLine, wobble, trace, wash, glazes, radial } from '../paint.js';
 import { palette, paintBayStatic, paintReefs, drawBeam, drawLamp, lampPos, pz, HORIZON, villageSites } from './bay-paint.js';
 import { REEFS, unproject, project, VIEW, MAGMELL } from '../../game/chart.js';
 import { Fleet } from '../../game/ships.js';
@@ -175,7 +175,7 @@ export class BayScene {
       bleed: lk.bleed, inkSpread: lk.inkSpread, gran: lk.gran, fog, fogColor: fogColorFor(tod),
       wobble: 3 + lk.bleed * 3, edge: 1.0, lightGain: 1.0,
       clear: [0.12, 0.62, 0.14, 0.09], clearAmt: this.magMell * 1.1,
-      cloak: this.manannan ? this.manannan.uv || [0.5, 0.5, 0.03, 0.2] : [0.5, 0.5, 0.05, 0.2], cloakAmt: this.manannan ? this.manannan.a * 0.85 : 0,
+      cloak: this.manannan ? this.manannan.uv || [0.5, 0.5, 0.03, 0.2] : [0.5, 0.5, 0.05, 0.2], cloakAmt: this.manannan ? this.manannan.a * 0.6 : 0,
     };
   }
 
@@ -367,49 +367,77 @@ export class BayScene {
   drawMagMell(L, a) {
     // an island in impossible colour, far out past the stacks, for a moment
     const { paint: c, light } = L;
-    const x = 120, y = HORIZON + 4;
+    const x = 130, y = HORIZON + 4;
     c.save();
+    c.translate(x, y); c.scale(1.4, 1.4); c.translate(-x, -y);
     c.globalAlpha = a;
-    wash(c, [[x - 110, y + 2], [x - 70, y - 22], [x - 20, y - 34], [x + 30, y - 26], [x + 80, y - 14], [x + 120, y + 2]], '#7FB35A', { alpha: 1, amp: 2, seed: 5 });
-    wash(c, [[x - 60, y - 18], [x - 20, y - 32], [x + 20, y - 26], [x + 30, y - 12]], '#E9C24A', { alpha: 0.7, amp: 2, seed: 6 });
-    wash(c, [[x - 140, y - 70], [x + 160, y - 80], [x + 170, y - 30], [x - 150, y - 30]], '#F2B07A', { alpha: 0.35, amp: 6, seed: 7, blur: 4 });
-    blob(c, x - 30, y - 14, 8, 6, '#D8668A', 0.8, 8);
-    blob(c, x + 20, y - 18, 6, 5, '#F3E6A8', 0.9, 9);
+    wash(c, [[x - 110, y + 2], [x - 70, y - 22], [x - 20, y - 34], [x + 30, y - 26], [x + 80, y - 14], [x + 120, y + 2]], '#7FB35A', { alpha: a, amp: 2, seed: 5 });
+    wash(c, [[x - 60, y - 18], [x - 20, y - 32], [x + 20, y - 26], [x + 30, y - 12]], '#E9C24A', { alpha: 0.7 * a, amp: 2, seed: 6 });
+    radial(c, x, y - 36, 230, [[0, rgba('#F4BC84', 0.5 * a)], [0.5, rgba('#F2B07A', 0.2 * a)], [1, rgba('#F2B07A', 0)]], 'source-over', 0.38);
+    wash(c, [[x - 70, y - 14], [x - 46, y - 40], [x - 22, y - 46], [x + 4, y - 36], [x + 14, y - 20]], '#5E9A48', { alpha: 0.85 * a, amp: 2, seed: 15 });
+    for (let i = 0; i < 9; i++) blob(c, x - 80 + i * 20, y - 12 - Math.sin(i * 1.3) * 9 - (i > 2 && i < 6 ? 16 : 0), 7, 6, i % 2 ? '#4E8A3E' : '#6AA850', 0.85 * a, 20 + i);
+    for (let i = 0; i < 7; i++) blob(c, x - 70 + i * 22, y - 18 - Math.sin(i * 1.3) * 9 - (i > 1 && i < 5 ? 14 : 0), 2.4, 2.4, i % 3 ? '#F3D46A' : '#E8789A', 0.9 * a, 40 + i, 0.1);
     c.restore();
-    glow(light, x, y - 20, 200, '#F2C063', 0.5 * a);
-    glow(light, x, y - 20, 60, '#FFE6A8', 0.5 * a);
+    glow(light, x, y - 26, 260, '#F2C063', 0.55 * a);
+    glow(light, x, y - 26, 80, '#FFE6A8', 0.5 * a);
   }
 
   drawManannan(L, pal) {
     // a tall shape on the water, wrapped in mist; never clear
     const m = this.manannan;
     const { paint: c, ink, light } = L;
-    const wx = 30, wy = 24;
+    const wx = 33, wy = 25;
     const [sx, sy, sc] = pz(wx, wy, 0);
-    const H = 300 * sc, W = 70 * sc;
+    const H = 440 * sc, W = 128 * sc;
     const a = m.a;
-    c.save();
-    c.globalAlpha = a * 0.75;
     const body = [];
-    const N = 20;
-    for (let i = 0; i <= N; i++) { const u = i / N; body.push([sx - W * (0.18 + 0.32 * u) - noise1(u * 4 + m.tt * 0.3, 3) * 6, sy - H + u * H]); }
-    for (let i = N; i >= 0; i--) { const u = i / N; body.push([sx + W * (0.18 + 0.32 * u) + noise1(u * 4 + m.tt * 0.3, 5) * 6, sy - H + u * H]); }
-    wash(c, body, mixHex('#5E6676', '#9AA2AE', 0.3), { alpha: 0.8, amp: 6, seed: 3, blur: 5 });
+    const N = 28;
+    const half = (u) => W * (u < 0.16 ? 0.13 + 0.12 * Math.sin((u - 0.08) / 0.08 * Math.PI / 2) : 0.25 + 0.42 * Math.pow((u - 0.16) / 0.84, 1.3));
+    for (let i = 0; i <= N; i++) { const u = 0.08 + (i / N) * 0.92; body.push([sx - half(u) - noise1(u * 4 + m.tt * 0.3, 3) * 9 * sc, sy - H + u * H]); }
+    for (let i = N; i >= 0; i--) { const u = 0.08 + (i / N) * 0.92; body.push([sx + half(u) * 1.1 + noise1(u * 4 + m.tt * 0.3, 5) * 12 * sc, sy - H + u * H]); }
+    const fade = (ctx, col, top, bottom) => {
+      const g = ctx.createLinearGradient(0, sy - H, 0, sy + 6);
+      g.addColorStop(0, rgba(col, top)); g.addColorStop(0.55, rgba(col, top * 0.85)); g.addColorStop(1, rgba(col, bottom));
+      return g;
+    };
+    c.save();
+    // the cloak trailing off with the wind, as mist
+    for (let i = 0; i < 16; i++) {
+      const u = i / 15;
+      const tx = sx + W * 0.35 + u * W * 2.8, ty = sy - H * (0.42 - u * 0.3) + Math.sin(u * 5 + m.tt * 0.4) * 10 * sc;
+      blob(c, tx, ty, (26 + u * 30) * sc, (14 + u * 10) * sc, '#8C93A2', a * 0.16 * (1 - u * 0.7), 60 + i, 0.3);
+    }
+    wash(c, body, fade(c, '#41485A', 0.95, 0.15), { alpha: a, amp: 6, seed: 3, blur: 2 });
+    // folds, a little lighter where the lamp reaches
+    glazes(c, sx - W * 0.4, sx + W * 0.45, sy - H * 0.75, sy - H * 0.1, ['#6A7284', '#8C93A2'], { count: 7, alpha: [0.08 * a, 0.18 * a], w: [6 * sc, 14 * sc], h: [H * 0.3, H * 0.5], seed: 12, tilt: 0.04 });
     // the head, turning: a little lighter on the side that faces the light
-    const hx = sx + m.turn * W * 0.08, hy = sy - H + 10 * sc;
-    blob(c, hx, hy, W * 0.16, W * 0.22, '#4E5566', 0.85, 4, 0.1);
-    blob(c, hx - m.turn * W * 0.06, hy + 2, W * 0.08, W * 0.14, '#A9AFBA', 0.35 * (1 - Math.abs(m.turn) * 0.6), 5, 0.1);
+    const hx = sx + m.turn * W * 0.08, hy = sy - H + 14 * sc;
+    blob(c, hx, hy, W * 0.15, W * 0.2, '#3A4152', 0.95 * a, 4, 0.1);
+    blob(c, hx - m.turn * W * 0.06, hy + 2, W * 0.07, W * 0.13, '#B5BBC6', 0.4 * a * (1 - Math.abs(m.turn) * 0.6), 5, 0.1);
     c.restore();
+    // a faint inked presence, so the mist can't take him altogether
+    ink.save();
+    ink.globalAlpha = a * 0.34;
+    ink.fillStyle = fade(ink, '#2C3242', 1, 0);
+    trace(ink, wobble(body, { amp: 3, seed: 21 }));
+    ink.fill();
+    ink.globalAlpha = a * 0.4;
+    for (let k = 0; k < 4; k++) {
+      const fx = sx + (k - 1.5) * W * 0.17;
+      inkLine(ink, [[fx, sy - H * 0.72], [fx + 2 * sc, sy - H * 0.4], [fx + (k - 1.5) * 6 * sc, sy - H * 0.05]], { width: 1.1, alpha: 0.24 * a, seed: 30 + k, breaks: 0.2 });
+    }
+    ink.restore();
     // every reflection, at once
     c.save();
-    c.globalAlpha = a * 0.25;
-    c.fillStyle = '#4A5160';
-    for (let i = 0; i < 9; i++) c.fillRect(sx - W * 0.3 + Math.sin(m.tt + i) * 3, sy + 4 + i * 7 * sc, W * 0.6 * (1 - i / 10), 3 * sc);
+    c.globalAlpha = a * 0.35;
+    c.fillStyle = '#3E4556';
+    for (let i = 0; i < 12; i++) c.fillRect(sx - W * 0.35 + Math.sin(m.tt + i) * 4, sy + 4 + i * 8 * sc, W * 0.75 * (1 - i / 13), 3.4 * sc);
     c.restore();
-    glow(light, hx, hy - 10, 120 * sc, '#8E9AB0', 0.15 * a);
-    // fog uniforms: the cloak follows him
-    const [cx, cy] = this.game.layers.toCss(sx, sy - H * 0.5);
-    this.manannan.uv = [cx / this.game.layers.cssW, 1 - cy / this.game.layers.cssH, (W * 1.3 * this.game.layers.k) / this.game.layers.cssW, (H * 0.65 * this.game.layers.k) / this.game.layers.cssH];
+    glow(light, hx, hy - 10, 160 * sc, '#8E9AB0', 0.22 * a);
+    // fog uniforms: the mist gathers about his feet and trails off
+    const [cx, cy] = this.game.layers.toCss(sx + W * 0.6, sy - H * 0.2);
+    const k = this.game.layers.k;
+    this.manannan.uv = [cx / this.game.layers.cssW, 1 - cy / this.game.layers.cssH, (W * 2.4 * k) / this.game.layers.cssW, (H * 0.35 * k) / this.game.layers.cssH];
   }
 
   drawWeather(L, pal, t) {

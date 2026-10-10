@@ -77,7 +77,7 @@ export class LogbookScene {
 
   look() {
     const n = this.night || NIGHTS[0];
-    return { ...n.look, fog: 0, wobble: 2.2, edge: 1, warmth: (n.look.warmth ?? 0.5) + (this.mode === 'dawn' ? -0.1 : 0.05), lightGain: 1 };
+    return { ...n.look, inkOut: 1, fog: 0, wobble: 2.2, edge: 1, warmth: (n.look.warmth ?? 0.5) + (this.mode === 'dawn' ? -0.1 : 0.05), lightGain: 1 };
   }
 
   // ---------------- data ----------------
