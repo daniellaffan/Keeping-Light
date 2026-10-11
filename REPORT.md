@@ -460,3 +460,40 @@ Screenshots (1280×800, software-rendered):
 * **The time-lapse pace** has no sound or look of its own beyond the wider view and the clock.
 * **Not checked on real hardware:** frame rate, the look under a real GPU, pointer lock and the touch
   stick on a phone. The door's step-back and the stairs' rail grip were checked only at held frames.
+
+## First person by default (milestone 6)
+
+**First person is now the game.**
+* The plain URL plays first person; `?view=classic` is the original 2D game, kept whole. Every
+  debug key and URL parameter works with either.
+* If the 3D world can't be built on a device (its modules fail to load or construct), the error goes
+  to the console and the 2D game plays instead. Checked by blocking `world.js` in the test browser:
+  the 2D day map came up.
+
+**Docs.**
+* README describes playing in first person: the controls for mouse and keyboard and for touch, and
+  each phase as you now play it.
+* README's debug section gains `C`, `T`, `H`, `view=classic`, `test=room`, `__game.step` and
+  `__game.noRender`.
+* DESIGN has a "First person" section (how the 3D world renders through the same watercolor layers,
+  the keeper's wrappers over the old phase machine, a day, the finale) and "Decisions made for first
+  person". Its file list covers `src/world/`.
+
+**Verified** (headless Chromium with SwiftShader, as in M5):
+* `?debug=1&autoplay=1&speed=4` (now first person) runs from the title through all 19 nights
+  (19 places walked to and read), the stairs, the sunset and the end card, back to the title. It
+  logs `AUTOPLAY COMPLETE` with no console errors. Logic only, with painting skipped.
+* `?debug=1&autoplay=1&view=classic&speed=4` does the same in 2D with no errors.
+* `node tools/check-nights.mjs` passes.
+
+Screenshots:
+* [leaning over the logbook at dusk](docs/screenshots/36-night5-logbook-lean.jpg)
+* [lighting the lamp](docs/screenshots/37-night5-lighting-the-lamp.jpg)
+* [the dawn page](docs/screenshots/38-night5-dawn-page.jpg)
+* [the logbook on a phone held upright, 375×812](docs/screenshots/39-phone-logbook-first-person.jpg)
+
+**Not done here, and worth doing on real hardware:**
+* Time a human playthrough.
+* Measure the frame rate on an integrated-GPU laptop and on a phone (the brief's 60 fps target).
+* Try pointer lock and the touch stick.
+* Look at the watercolor under a real GPU against these software-rendered shots.

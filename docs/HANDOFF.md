@@ -1,4 +1,4 @@
-# Handoff: first-person build, milestones 1–5 done
+# Handoff: first-person build, milestones 1–6 done
 
 The brief is `docs/prompts/first-person-threejs.md`. Read it with README.md, DESIGN.md and REPORT.md
 before you change anything. Run the game with `python3 tools/serve.py 8001`.
@@ -11,7 +11,9 @@ before you change anything. Run the game with `python3 tools/serve.py 8001`.
 | M2 | 4a13472 | The watch room, and leaning over the logbook |
 | M3 | 8d81651 | The keeper's hands, posed and solved |
 | M4 | cac9fbf | The night from the chair: Fleet, time-lapse, beats, the sill note, eyelids |
-| M5 | (this commit) | The day: the door, the headland walk, the six places, the light failing; the first-person stairs; footsteps, room tone and two reverbs |
+| M5 | 4a02fed | The day: the door, the headland walk, the six places, the light failing; the first-person stairs; footsteps, room tone and two reverbs |
+
+| M6 | (this commit) | First person is the default (`?view=classic` for 2D, automatic fallback); README and DESIGN; screenshots 36–39 |
 
 REPORT.md has a section for each milestone, including what is still rough and what was decided
 differently from the plan (M5: the clock runs at √pace; the climb is 8 treads, not 14).
@@ -31,7 +33,7 @@ The flow is:
 7. `onDawnDone()` saves, then either calls `startNight(id + 1)` or, after the last night, goes to
    `go('finale', {part: 'stairs'})`.
 
-When `?view=fp` is set:
+In first person (the default; not with `?view=classic`):
 - `boot()` creates `game.world` and `game.keeper = new Keeper(game)`, then
   `Object.assign(game.scenes, game.keeper.wrappers)`.
 - The keeper wraps logbook, bay, daymap and vignette. `finale` is a composite wrapper: the stairs
@@ -138,11 +140,13 @@ When `?view=fp` is set:
   (`willReadFrequently`): SwiftShader drops canvas clears after a texture upload, which leaves stale
   HUD panels in screenshots. That's an artefact of the test browser, not the game.
 
-## M6 (after M5)
+## What's next
 
-- Autoplay end to end and check-nights.
-- Update README and DESIGN, and add screenshots.
-- Make first person the default and keep `?view=classic`.
+- **Check on real hardware:** the frame rate on an integrated laptop GPU and a phone, pointer lock, the
+  touch stick, and the look under a real GPU (everything so far was rendered in software).
+- **Replace the placeholder places** one file at a time (`src/world/places/`); the interface stays.
+- **Known rough edges are listed in REPORT** (M4 and M5): the squat tower from outside, the soft ground
+  close up, small far boats.
 
 ## Testing notes
 
