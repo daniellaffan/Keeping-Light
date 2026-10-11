@@ -13,6 +13,7 @@
 // a twist bone at mid-forearm and the wrist so pronation never wrings the skin.
 import * as THREE from 'three';
 import { wash } from './materials.js';
+import { quill } from './inkwell.js';
 import { knitTex } from './textures.js';
 
 import { UPPER, FORE, FINGERS, FNAMES, THUMB, buildSkinData } from './handmesh.js';
@@ -207,7 +208,9 @@ export class Arm {
     const seed = this.side > 0 ? 0.3 : 1.7;
     const rings = [];
     const zs = [];
-    for (let z = 0.16; z > end + 0.012; z -= 0.008) zs.push({ z, inner: 0 });
+    // all the way up to the shoulder (seen from above, standing at the table), rounded off over it
+    for (let k = 0; k < 6; k++) zs.push({ z: UPPER + 0.036 * Math.cos((k / 6) * Math.PI / 2) * (k ? 1 : 0.98), inner: 0 });
+    for (let z = UPPER; z > end + 0.012; z -= 0.008) zs.push({ z, inner: 0 });
     // the rolled cuff: out over the edge and back inside
     for (let k = 0; k <= 6; k++) zs.push({ z: end + 0.012 - Math.sin((k / 6) * Math.PI / 2) * 0.012, roll: k / 6 });
     for (let k = 1; k <= 4; k++) zs.push({ z: end + (k / 4) * 0.03, inner: k / 4 });
@@ -223,7 +226,10 @@ export class Arm {
       if (s.roll != null) grow += 0.004 + Math.sin(s.roll * Math.PI) * 0.005 - s.roll * 0.006;
       if (s.inner) grow = 0.006 - s.inner * 0.004;
       const c = V(0, 0.002, -UPPER + z);
-      const pts = section(c, V(1, 0, 0), V(0, 1, 0), arx + grow, ary + grow, N, 2.0, (x, y, a) => {
+      // the shoulder: fuller, and domed over the top
+      const sh = sstep(0.16, UPPER, z) * 0.012;
+      const dome = z > UPPER ? Math.sqrt(Math.max(0.004, 1 - Math.pow((z - UPPER) / 0.036, 2))) : 1;
+      const pts = section(c, V(1, 0, 0), V(0, 1, 0), (arx + grow + sh) * dome, (ary + grow + sh) * dome, N, 2.0, (x, y, a) => {
         if (s.inner) return [x, y];
         // folds: rings of slack that wander round the arm
         const f = Math.sin(z * 210 + Math.sin(a * 2 + seed) * 1.6 + seed) * 0.5 + 0.5;
@@ -235,7 +241,7 @@ export class Arm {
       const w = [[iS, sstep(0.0, 0.08, z)], [iE, 1 - sstep(0.0, 0.08, z)], [iT, u * 0.8]];
       rings.push({ pts, w, tint: () => [1, 1, 1, 0], uv: (k) => [k / N * 3, z * 9] });
     }
-    L.tube(rings);
+    L.tube(rings, { capStart: true, startPoint: V(0, 0.002, 0.036) });
     return L.geometry(this.mirror);
   }
 
@@ -249,7 +255,7 @@ export class Arm {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// Things held: a pencil, the dip pen. Each knows where its working tip is in wrist space.
+// Things held: a pencil, and the quill (inkwell.js). Each has its working point at its origin.
 function pencil(mats) {
   const g = new THREE.Group();
   const body = new THREE.Mesh(new THREE.CylinderGeometry(0.0036, 0.0036, 0.13, 6).translate(0, 0.065 + 0.018, 0), mats.pencil);
@@ -262,17 +268,6 @@ function pencil(mats) {
   return g;
 }
 
-function dipPen(mats) {
-  const g = new THREE.Group();
-  const holder = new THREE.Mesh(new THREE.CylinderGeometry(0.0042, 0.0034, 0.14, 8).translate(0, 0.07 + 0.026, 0), mats.penwood);
-  const ferrule = new THREE.Mesh(new THREE.CylinderGeometry(0.0034, 0.003, 0.012, 8).translate(0, 0.02, 0), mats.steel);
-  const nibShape = new THREE.Shape();
-  nibShape.moveTo(-0.0026, 0.014); nibShape.lineTo(0.0026, 0.014); nibShape.lineTo(0.0004, 0.0); nibShape.lineTo(-0.0004, 0.0);
-  const nib = new THREE.Mesh(new THREE.ShapeGeometry(nibShape), mats.nib);
-  g.add(holder, ferrule, nib);
-  g.userData.tip = new THREE.Vector3(0, 0, 0);
-  return g;
-}
 
 // ---------------------------------------------------------------------------------------------------
 // Poses. A pose sets, for each hand, where the wrist goes (in some frame: the body, the book, the
@@ -312,14 +307,14 @@ export const POSES = {
   // ready to write: the same, the pencil lying in the right hand, which rests on its little-finger side
   ready: {
     R: hand(TRIPOD, { frame: 'book', pos: [0.41, 0.038, 0.13], rot: [0.0, 0.42, -0.62], hold: 'pencil',
-      fingers: { index: [0, 0.47, 0.52, 0.47], middle: [-0.05, 0.43, 0.86, 0.2] }, thumb: [0.46, -0.43, 0.52, 0.05, -0.6] }),
+      fingers: { index: [0, 0.51, 0.39, -0.13], middle: [-0.05, 0.63, 0.52, -0.29] }, thumb: [0.48, -0.48, 0.81, 0.02, -0.59] }),
     L: hand(FLAT, { frame: 'book', pos: [-0.405, 0.024, 0.12], rot: [0.0, 0.05, -0.03] }),
   },
   // writing: the pencil tip is placed by IK under the cursor, the hand trailing behind it to the lower
   // right; the left hand stays where it was, beside the book
   write: {
     R: hand(TRIPOD, { frame: 'book', tip: true, hold: 'pencil', rot: [-0.08, 0.52, -0.55],
-      fingers: { index: [0, 0.47, 0.52, 0.47], middle: [-0.05, 0.43, 0.86, 0.2] }, thumb: [0.46, -0.43, 0.52, 0.05, -0.6] }),
+      fingers: { index: [0, 0.51, 0.39, -0.13], middle: [-0.05, 0.63, 0.52, -0.29] }, thumb: [0.48, -0.48, 0.81, 0.02, -0.59] }),
     L: hand(FLAT, { frame: 'book', pos: [-0.405, 0.024, 0.12], rot: [0.0, 0.05, -0.03] }),
   },
   // the dip pen: held a little more upright, the same left hand
@@ -363,6 +358,30 @@ export const POSES = {
     R: hand(GRIP, { frame: 'rail', pos: [0.0, 0.02, 0.0], rot: [0.1, 0.0, -0.2], fingers: { index: [0, 0.9, 1.0, 0.55], middle: [0, 1.0, 1.1, 0.6] } }),
     L: hand(RELAX, { frame: 'body', pos: [-0.24, -0.7, -0.1], align: [-1, 0.1, 0.3] }),
   },
+  // inking the plan, step by step (the keeper runs them in turn; the left hand stays beside the book):
+  // the pencil set down in the tray, point first
+  'ink-tray': {
+    R: hand(TRIPOD, { frame: 'trayPencil', grasp: 'pencil', hold: 'pencil',
+      fingers: { index: [0, 0.51, 0.39, -0.13], middle: [-0.05, 0.63, 0.52, -0.29] }, thumb: [0.48, -0.48, 0.81, 0.02, -0.59] }),
+    L: hand(FLAT, { frame: 'book', pos: [-0.405, 0.024, 0.12], rot: [0.0, 0.05, -0.03] }),
+  },
+  // the hand round the inkwell, thumb over the top, to slide it in beside the book
+  'ink-well': {
+    R: hand(CUP, { frame: 'inkwell', pos: [0.036, 0.028, 0.004], at: [0.0, -0.018, -0.05], rot: [0.0, 0.35, -Math.PI / 2],
+      fingers: { index: [0.05, 0.7, 0.7, 0.35], middle: [0, 0.78, 0.75, 0.38], ring: [0.03, 0.82, 0.8, 0.4], little: [0.08, 0.86, 0.82, 0.4] }, thumb: [0.3, 0.2, 0.2, 0.25, 0.3] }),
+    L: hand(FLAT, { frame: 'book', pos: [-0.405, 0.024, 0.12], rot: [0.0, 0.05, -0.03] }),
+  },
+  // fingers on the quill where it stands in the well; and the quill drawn up out of it
+  'ink-take': {
+    R: hand(TRIPOD, { frame: 'quillWell', grasp: 'pen', hold: 'pen',
+      fingers: { index: [0, 0.48, 0.52, 0.06], middle: [-0.05, 0.5, 0.76, -0.14] }, thumb: [0.46, -0.42, 0.8, 0.05, -0.6] }),
+    L: hand(FLAT, { frame: 'book', pos: [-0.405, 0.024, 0.12], rot: [0.0, 0.05, -0.03] }),
+  },
+  'ink-lift': {
+    R: hand(TRIPOD, { frame: 'quillUp', grasp: 'pen', hold: 'pen',
+      fingers: { index: [0, 0.48, 0.52, 0.06], middle: [-0.05, 0.5, 0.76, -0.14] }, thumb: [0.46, -0.42, 0.8, 0.05, -0.6] }),
+    L: hand(FLAT, { frame: 'book', pos: [-0.405, 0.024, 0.12], rot: [0.0, 0.05, -0.03] }),
+  },
   // debug only (the hands review's studio): held up before the face, fingers at ease
   show: {
     R: hand(RELAX, { frame: 'body', pos: [0.1, -0.12, -0.36], rot: [0.5, 0.25, 0.1] }),
@@ -391,15 +410,17 @@ export class Hands {
     this.group.name = 'hands';
     this.group.add(this.R.root, this.L.root);
     this.pencil = pencil(this.mats);
-    this.pen = dipPen(this.mats);
+    this.pen = quill();
     this.R.hold('pencil', this.pencil);
     this.R.hold('pen', this.pen);
     this.tools = { pencil: this.pencil, pen: this.pen };
     // where each tool sits in the right wrist's frame for the tripod grip: shaft back over the
     // web of the thumb, tip out past the index pad
-    this.gripPencil = { pos: new THREE.Vector3(-0.03, -0.058, -0.148), rot: new THREE.Euler(0.96, -0.05, 0, 'YXZ') };
-    this.gripPen = { pos: new THREE.Vector3(-0.03, -0.062, -0.15), rot: new THREE.Euler(0.9, -0.05, 0, 'YXZ') };
+    this.gripPencil = { pos: new THREE.Vector3(-0.024, -0.065, -0.152), rot: new THREE.Euler(0.82, -0.133, 0, 'YXZ') };
+    // the quill a touch more upright, its feather back over the hand
+    this.gripPen = { pos: new THREE.Vector3(-0.024, -0.066, -0.15), rot: new THREE.Euler(0.68, -0.15, 0, 'YXZ') };
     for (const [t, gp] of [[this.pencil, this.gripPencil], [this.pen, this.gripPen]]) { t.position.copy(gp.pos); t.rotation.copy(gp.rot); }
+    this.grips = { pencil: this.gripPencil, pen: this.gripPen };
 
     this.pose = 'walk';
     this.from = null; this.blend = 1; this.blendDur = 0.5;
@@ -421,6 +442,20 @@ export class Hands {
 
   setStain(k) { this.mats.flesh.uniforms.uStain.value = k; }
 
+  // a tool into the right hand (as it's gripped) or out of it, laid somewhere (parent, local transform)
+  take(name) {
+    const t = this.tools[name], gp = this.grips[name];
+    this.R.B.wrist.add(t);
+    t.position.copy(gp.pos); t.rotation.copy(gp.rot);
+  }
+  put(name, parent, pos, rot) {
+    const t = this.tools[name];
+    parent.add(t);
+    t.position.copy(pos); t.rotation.copy(rot);
+    t.visible = true;
+  }
+  inHand(name) { return this.tools[name].parent === this.R.B.wrist; }
+
   // resolve a hand's pose into a world wrist target and finger values
   resolve(p, side, frames, S = null, pole = null) {
     const F = frames[p.frame] || frames.body;
@@ -434,18 +469,21 @@ export class Hands {
       const back = new THREE.Vector3(...p.align).applyQuaternion(F.quat);
       back.addScaledVector(fd, -back.dot(fd)).normalize();
       wq = basisQuat(fd.addScaledVector(back, -0.2).normalize(), back);
-    } else {
+    } else if (p.rot) {
       const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(p.rot[0], p.rot[1], p.rot[2], 'YXZ'));
       wq = F.quat.clone().multiply(q);
-    }
+    } else wq = F.quat.clone();
     let pos;
-    if (p.tip && this.tip) {
+    if (p.grasp && F.tool) {
+      // the hand where it would be holding this tool, the tool lying as the frame says (on the desk, in
+      // the well, at the start of the line): the grip run backwards
+      const gp = this.grips[p.grasp];
+      wq = F.quat.clone().multiply(new THREE.Quaternion().setFromEuler(gp.rot).invert());
+      pos = F.pos.clone().sub(gp.pos.clone().applyQuaternion(wq));
+    } else if (p.tip && this.tip) {
       // the tool's working tip goes to the target; the wrist sits wherever that puts it
-      const tool = this.tools[p.hold];
-      const gp = p.hold === 'pen' ? this.gripPen : this.gripPencil;
-      const tipLocal = gp.pos.clone();   // the tool's tip is its origin
-      pos = this.tip.clone().sub(tipLocal.applyQuaternion(wq));
-      void tool;
+      const gp = this.grips[p.hold];
+      pos = this.tip.clone().sub(gp.pos.clone().applyQuaternion(wq));
     } else {
       pos = new THREE.Vector3(...p.pos).applyQuaternion(F.quat).add(F.pos);
       // `at`: a point of the hand (wrist space) that goes to `pos`, rather than the wrist itself
@@ -513,7 +551,7 @@ export class Hands {
       follow(sp, tgt, POSES[this.pose][s].tip ? 34 : 11, dt);
       this.solve(arm, shoulders[s], sp.pos, t.quat, poles[s], dt, t.lead ?? 1);
       this.fingers(arm, t);
-      for (const [name, obj] of Object.entries(arm.held)) obj.visible = t.hold === name && this.visible;
+      for (const [name, obj] of Object.entries(arm.held)) if (obj.parent === arm.B.wrist) obj.visible = t.hold === name && this.visible;
     }
     this.R.root.visible = this.L.root.visible = this.visible;
   }

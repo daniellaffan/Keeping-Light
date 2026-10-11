@@ -8,7 +8,8 @@ import * as THREE from 'three';
 import { buildRoom, ROOM } from './room.js';
 import { Book } from './book.js';
 import { Walker } from './walker.js';
-import { Hands, POSE_NAMES } from './hands.js';
+import { Hands, POSES, POSE_NAMES } from './hands.js';
+import { inkwell } from './inkwell.js';
 import { TOWER, ROOM_YAW, UNIT } from './geo.js';
 import { Bay, landHeight } from './bay.js';
 import { Headland, DAY } from './headland.js';
@@ -74,6 +75,7 @@ export class Keeper {
     // the keeper's forearms and hands
     this.hands = new Hands();
     W.scene.add(this.hands.group);
+    this.buildDesk();
     this.poseOverride = null;     // debug H cycles through the poses
     this.frames = {};
     this.tip = new THREE.Vector3();
@@ -192,6 +194,7 @@ export class Keeper {
       this.bookNight = this.night.id;
       this.setLight(this.mode === 'dusk' ? 'dusk' : 'dawn');
       if (this.mode === 'dusk') {
+        this.resetDesk();
         this.leaving = false;
         this.bay.setNight(this.night);
         this.dawnShips = null; this.watch = null; this.lampLit = false;
@@ -845,7 +848,9 @@ export class Keeper {
   onInked(waypoints, meta) {
     this.pending = { waypoints, meta };
     this.after = 'light';
-    this.setState('lean-out');
+    // the quill goes back in the well before the keeper straightens up
+    if (this.ink) this.inkThen = true;
+    else this.setState('lean-out');
   }
 
   onBookClosed() {
@@ -895,6 +900,16 @@ export class Keeper {
         // a breath: the view rises and settles
         if (!this.blendT) {
           const p = this.leanPose();
+          // fetching the ink, the head turns to the inkwell (and back to the line to draw it)
+          const fetch = this.ink && this.ink.step < 7 ? 1 : 0;
+          this.inkLook = (this.inkLook || 0) + (fetch - (this.inkLook || 0)) * Math.min(1, dt * 2.5);
+          if (this.inkLook > 0.001) {
+            const w = this.well.getWorldPosition(new THREE.Vector3()).sub(p.pos);
+            const yaw = Math.atan2(-w.x, -w.z), pitch = Math.atan2(w.y, Math.hypot(w.x, w.z));
+            const k = ease(this.inkLook) * 0.5;
+            p.yaw += wrapA(yaw - p.yaw) * k;
+            p.pitch += (pitch - p.pitch) * k;
+          }
           this.applyPose(p);
           this.cam.pos.y += Math.sin(this.t * 1.3) * 0.0025;
           this.cam.pitch += Math.sin(this.t * 1.3 + 0.6) * 0.0016;
@@ -1122,6 +1137,140 @@ export class Keeper {
     this.game.inkPlan(p.waypoints, p.meta);
   }
 
+  // ---------------- the inkwell, the quill and the pencil tray ----------------
+  // They sit on the table in the book's own frame (x across, y up, z toward the keeper). The quill
+  // stands in the well leaning the way it's held to write, so the hand that takes it out is already in
+  // its writing grip; the pencil goes into the tray point first, the same way, then falls flat.
+  buildDesk() {
+    const desk = this.desk = new THREE.Group();
+    desk.position.copy(this.book.group.position);
+    desk.quaternion.copy(this.book.group.quaternion);
+    this.room.table.add(desk);
+    this.well = inkwell();
+    desk.add(this.well);
+    const grip = (pose, tool) => {
+      const P = POSES[pose].R, g = this.hands.grips[tool];
+      return new THREE.Quaternion().setFromEuler(new THREE.Euler(...P.rot, 'YXZ')).multiply(new THREE.Quaternion().setFromEuler(g.rot));
+    };
+    // the quill as it's held to write, stood a little straighter so it goes down the neck of the well
+    const q = grip('pen', 'pen'), up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+    const lean = Math.acos(up.y), MAX = 0.5;
+    if (lean > MAX) q.premultiply(new THREE.Quaternion().setFromAxisAngle(up.clone().cross(new THREE.Vector3(0, 1, 0)).normalize(), lean - MAX));
+    const dir = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+    // its point down in the ink, against the far side of the well, the shaft through the middle of the neck
+    const tip = new THREE.Vector3(-dir.x, 0, -dir.z).multiplyScalar(0.047 / Math.max(dir.y, 0.5)).setY(0.008);
+    this.quillWell = { pos: tip, quat: q };
+    this.hands.put('pen', this.well, tip, new THREE.Euler().setFromQuaternion(q, 'YXZ'));
+    // the pencil tray, beside the right hand's resting place; the pencil lies along it, point inward
+    const tray = new THREE.Vector3(0.439, 0.012, 0.028), trayYaw = 0.08;
+    const flatQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, trayYaw, -Math.PI / 2, 'YXZ'));
+    const tipFlat = tray.clone().add(new THREE.Vector3(-0.075, 0.0036, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), trayYaw));
+    this.trayPencil = { pos: tipFlat, flat: flatQ, tilt: grip('write', 'pencil') };
+    this.resetDesk();
+  }
+
+  // every dusk: the inkwell back in its place with the quill in it, the pencil in the hand
+  resetDesk() {
+    this.ink = null;
+    // the inkwell stands out of the way to the right of the book, and is brought in beside it (the arm
+    // never reaches across the pages for it)
+    this.wellHome = new THREE.Vector3(0.45, 0, -0.15);
+    this.wellNear = new THREE.Vector3(0.375, 0, -0.085);
+    this.well.position.copy(this.wellHome);
+    if (!this.hands.inHand('pencil')) this.hands.take('pencil');
+    if (this.hands.inHand('pen')) this.hands.put('pen', this.well, this.quillWell.pos, new THREE.Euler().setFromQuaternion(this.quillWell.quat, 'YXZ'));
+    this.pencilDrop = null;
+  }
+
+  // The inking, after the pencil line: put the pencil down, fetch the ink, take the quill out of the
+  // well and dip it, draw the line with it, and put it back. The logbook's own inking waits (hold) until
+  // the nib is on the start of the line.
+  startInk() {
+    const sc = this.book.scene;
+    sc.inking.hold = true;
+    sc.inking.dur = 3.4;
+    this.ink = { step: 0, t: 0 };
+    this.drawHold = 0;
+  }
+
+  // the steps: [hand pose, seconds, what happens at the end]
+  inkSteps() {
+    const h = this.hands, k = this;
+    return [
+      ['ink-tray', 0.8, () => { h.put('pencil', k.desk, k.trayPencil.pos, new THREE.Euler().setFromQuaternion(k.trayPencil.tilt, 'YXZ')); k.pencilDrop = 0; }],
+      ['ink-well', 0.7],
+      ['ink-well', 0.8, null, 'carry'],
+      ['ink-take', 0.6, () => h.take('pen')],
+      ['ink-lift', 0.45],
+      ['ink-take', 0.3],
+      ['ink-lift', 0.35],
+      ['pen', 0.6, () => { k.book.scene.inking.hold = false; }, 'start'],
+      ['pen', Infinity, null, 'draw'],
+      ['ink-lift', 0.7],
+      ['ink-take', 0.4, () => h.put('pen', k.well, k.quillWell.pos, new THREE.Euler().setFromQuaternion(k.quillWell.quat, 'YXZ'))],
+      ['lean', 0.6],
+    ];
+  }
+
+  updateInk(dt) {
+    const sc = this.book.scene;
+    // the pencil, let go in the tray, falls flat
+    if (this.pencilDrop != null && this.pencilDrop < 1) {
+      this.pencilDrop = Math.min(1, this.pencilDrop + dt / 0.22);
+      const k = this.pencilDrop * this.pencilDrop;
+      this.hands.pencil.quaternion.slerpQuaternions(this.trayPencil.tilt, this.trayPencil.flat, k);
+    }
+    if (!this.ink) {
+      if (sc.inking && !sc.inking.seen) { sc.inking.seen = true; if (this.state === 'lean') { sc.inking.t = 0; this.startInk(); } }
+      return;
+    }
+    // carried off mid-way (a jump in time): everything put where it would have ended up
+    if (this.state !== 'lean') {
+      if (this.hands.inHand('pen')) this.hands.put('pen', this.well, this.quillWell.pos, new THREE.Euler().setFromQuaternion(this.quillWell.quat, 'YXZ'));
+      if (this.hands.inHand('pencil')) this.hands.put('pencil', this.desk, this.trayPencil.pos, new THREE.Euler().setFromQuaternion(this.trayPencil.flat, 'YXZ'));
+      this.well.position.copy(this.wellNear);
+      if (this.book.scene.inking) this.book.scene.inking.hold = false;
+      this.ink = null; this.inkThen = false;
+      return;
+    }
+    const steps = this.inkSteps(), I = this.ink;
+    const [, dur, done, kind] = steps[I.step];
+    I.t += dt;
+    if (kind === 'carry') {
+      // the inkwell comes in beside the book, lifted a little on the way
+      const e = ease(Math.min(1, I.t / dur));
+      this.well.position.lerpVectors(this.wellHome, this.wellNear, e);
+      this.well.position.y = Math.sin(e * Math.PI) * 0.025;
+    }
+    const finished = kind === 'draw' ? !sc.inking || sc.inking.t >= 1 : I.t >= dur;
+    if (finished) {
+      done?.();
+      I.step++; I.t = 0;
+      if (I.step >= steps.length) {
+        this.ink = null;
+        if (this.inkThen) { this.inkThen = false; this.setState('lean-out'); }
+      }
+    }
+  }
+
+  inkPose() {
+    if (!this.ink) return 'lean';
+    return this.inkSteps()[this.ink.step][0];
+  }
+
+  // where the nib is: on the line as far as the ink has gone, sliding smoothly between its points
+  nibAt(out) {
+    const sc = this.book.scene, pts = sc.penPts;
+    if (!pts || pts.length < 2) return false;
+    const kind = this.ink ? this.inkSteps()[this.ink.step][3] : null;
+    const p = kind === 'start' ? 0 : Math.min(1, Math.max(0, sc.inking?.t || 0));
+    const f = Math.min(pts.length - 1.001, Math.max(0, pts.length * p - 1));
+    const i = Math.floor(f), u = f - i;
+    this.book.worldAt(pts[i][0] + (pts[i + 1][0] - pts[i][0]) * u, pts[i][1] + (pts[i + 1][1] - pts[i][1]) * u, out);
+    if (kind === 'start') out.y += 0.01 * (1 - smooth(0.2, 0.6, this.ink.t));
+    return true;
+  }
+
   // ---------------- hands ----------------
   // the pose for this moment: what the keeper is doing decides what the hands are doing
   handPose() {
@@ -1137,9 +1286,9 @@ export class Keeper {
         if (sc.flipAnim && !this.book.single) return 'turn';
         // the pencil comes onto the page only while it's drawing (and a moment after); otherwise the
         // hands rest beside the book and leave every page clear
-        if (this.mode === 'dusk') return this.drawHold > 0 ? 'write' : 'ready';
+        if (this.mode === 'dusk' && this.hands.inHand('pencil')) return this.drawHold > 0 ? 'write' : 'ready';
         return 'lean';
-      case 'lean-out': return sc.inking ? this.inkPose() : this.mode === 'dusk' ? 'ready' : 'lean';
+      case 'lean-out': return this.ink ? this.inkPose() : this.mode === 'dusk' && this.hands.inHand('pencil') ? 'ready' : 'lean';
       case 'light': return 'lamp';
       case 'to-chair': return 'walk';
       case 'chair': return this.sip && this.sip.t > 0.2 && this.sip.t < 4.0 ? 'mug' : 'chair';
@@ -1151,9 +1300,6 @@ export class Keeper {
       default: return 'lean';
     }
   }
-
-  // inking the plan (see the inking section)
-  inkPose() { return 'pen'; }
 
   frame(name) { return (this.frames[name] ||= { pos: new THREE.Vector3(), quat: new THREE.Quaternion(), fwd: new THREE.Vector3() }); }
 
@@ -1180,6 +1326,17 @@ export class Keeper {
     const b = this.book, Wl = 0.62 / 1512 * 728, Hl = 0.62 / 1512 * 872;
     fromObj('leaf', b.leaf, new THREE.Vector3(Wl * 0.94, 0, Hl / 2 * 0.86));
     fromObj('lid', b.coverLid, new THREE.Vector3(-0.62 / 2 * 0.92, 0, 0.62 / 1512 * 920 / 2 * 0.86));
+    // the inkwell, the quill's place in it (and above it), the pencil's place in the tray
+    fromObj('inkwell', this.well);
+    const wf = this.frame('inkwell'), qw = this.frame('quillWell'), qu = this.frame('quillUp'), tp = this.frame('trayPencil');
+    qw.pos.copy(this.quillWell.pos).applyQuaternion(wf.quat).add(wf.pos);
+    qw.quat.copy(wf.quat).multiply(this.quillWell.quat);
+    qu.pos.copy(qw.pos).add(new THREE.Vector3(0, 0.1, 0)); qu.quat.copy(qw.quat);
+    qw.tool = qu.tool = tp.tool = true;
+    const df = this.frame('desk');
+    fromObj('desk', this.desk);
+    tp.pos.copy(this.trayPencil.pos).applyQuaternion(df.quat).add(df.pos);
+    tp.quat.copy(df.quat).multiply(this.trayPencil.tilt);
     // the lever's shaft, a hand's width from the ball
     fromObj('lever', this.room.lever, new THREE.Vector3(0, 0, -0.17));
     // the door's ring, which swings with the door
@@ -1202,12 +1359,16 @@ export class Keeper {
     // drawing: the button held down on the page; the hand lingers a moment after it lets go
     if (this.state === 'lean' && this.pointerOnPage && b.input.down && this.mode === 'dusk' && !sc.inking) this.drawHold = 1.2;
     else this.drawHold = Math.max(0, (this.drawHold || 0) - dt);
+    this.updateInk(dt);
     const pose = this.handPose();
-    h.setPose(pose, pose === 'write' || h.pose === 'write' ? 0.3 : this.state === 'lean' ? 0.45 : 0.6);
-    // the writing tip: under the pointer on the page, lifted a hair unless pressing
-    if (this.state === 'lean' || this.state === 'review') {
+    // each step of the inking takes the hand there in the step's own time
+    const inkDur = this.ink ? Math.min(this.inkSteps()[this.ink.step][1], 0.9) : 0;
+    h.setPose(pose, this.ink ? inkDur : pose === 'write' || h.pose === 'write' ? 0.3 : this.state === 'lean' ? 0.45 : 0.6);
+    // the writing tip: under the pointer on the page, lifted a hair unless pressing; inking, the nib
+    if (this.state === 'lean' || this.state === 'review' || this.ink) {
       const bi = b.input;
-      if (sc.inking && sc.penAt) b.worldAt(sc.penAt[0], sc.penAt[1], this.tip);
+      if (sc.inking && this.nibAt(this.tip)) { /* on the line */ }
+      else if (sc.inking && sc.penAt) b.worldAt(sc.penAt[0], sc.penAt[1], this.tip);
       else if (this.pointerOnPage) {
         b.worldAt(bi.x, bi.y, this.tip);
         this.tip.y += bi.down ? 0 : 0.006;
@@ -1251,7 +1412,7 @@ export class Keeper {
     this.world.shared.uFogNear.value = haar ? 0.4 : 8;
     const C = this.bookCentre();
     let p;
-    if (['write', 'ready', 'pen', 'quill', 'lean', 'turn', 'close'].includes(pose)) {
+    if (['write', 'ready', 'pen', 'lean', 'turn', 'close'].includes(pose) || pose.startsWith('ink')) {
       this.book.open = true;
       p = this.leanPose();
       this.tipStale = true;

@@ -273,7 +273,8 @@ export class LogbookScene {
     if (this.flipAnim) { this.flipAnim.t += dt / 0.55; if (this.flipAnim.t >= 1) this.flipAnim = null; }
     if (this.flash) { this.flash.t += dt; if (this.flash.t > 3) this.flash = null; }
     if (this.inking) {
-      this.inking.t += dt / 2.4;
+      // (in first person the keeper holds the inking while he fetches the quill, and sets its pace)
+      if (!this.inking.hold) this.inking.t += dt / (this.inking.dur || 2.4);
       if (this.inking.t >= 1.3 && !this.inking.sent) {
         this.inking.sent = true;
         g.inkPlan(this.wps, { style: this.style });
@@ -669,6 +670,7 @@ export class LogbookScene {
           const k = Math.min(pts.length - 1, Math.floor(pts.length * inkP));
           glow(L.light, pts[k][0], pts[k][1], 26, '#E6C27A', 0.35);
           this.penAt = pts[k];   // where the nib is (the 3D hand follows it)
+          this.penPts = pts;
         }
       }
     });
