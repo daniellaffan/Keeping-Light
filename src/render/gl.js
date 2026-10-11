@@ -60,8 +60,14 @@ export function createTexture(gl, { mipmap = false, wrap = gl.CLAMP_TO_EDGE } = 
 
 export function uploadCanvas(gl, t, canvas) {
   gl.bindTexture(gl.TEXTURE_2D, t.tex);
+  // set every unpack flag explicitly: three.js shares this context and leaves its own behind
   gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+  gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+  gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
+  gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
+  gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0);
   if (t.w === canvas.width && t.h === canvas.height) {
     gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
   } else {
@@ -73,11 +79,12 @@ export function uploadCanvas(gl, t, canvas) {
 }
 
 // A colour render target (texture + framebuffer) sized to w×h.
-export function createTarget(gl, w, h) {
+export function createTarget(gl, w, h, { mipmap = false } = {}) {
   const tex = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, tex);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  if (mipmap) gl.generateMipmap(gl.TEXTURE_2D);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, mipmap ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
@@ -85,11 +92,25 @@ export function createTarget(gl, w, h) {
   gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  return { tex, fb, w, h };
+  return { tex, fb, w, h, mipmap };
 }
 
 export function deleteTarget(gl, t) {
   if (!t) return;
   gl.deleteTexture(t.tex);
   gl.deleteFramebuffer(t.fb);
+}
+
+// Put the fixed-function state back to what the raw passes expect. three.js caches its own view of
+// this state, so the world calls renderer.resetState() after any raw pass and before rendering again.
+export function rawState(gl) {
+  gl.disable(gl.BLEND);
+  gl.disable(gl.DEPTH_TEST);
+  gl.disable(gl.CULL_FACE);
+  gl.disable(gl.SCISSOR_TEST);
+  gl.disable(gl.STENCIL_TEST);
+  gl.disable(gl.POLYGON_OFFSET_FILL);
+  gl.colorMask(true, true, true, true);
+  gl.depthMask(true);
+  gl.bindBuffer(gl.ARRAY_BUFFER, null);
 }

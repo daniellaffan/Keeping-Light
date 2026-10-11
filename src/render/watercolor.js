@@ -1,5 +1,5 @@
 // The watercolor composite: four painted layers in, one sketchbook page out.
-import { createProgram, createTexture, createTarget, deleteTarget, uploadCanvas, FULLSCREEN_VS } from './gl.js';
+import { createProgram, createTexture, createTarget, deleteTarget, uploadCanvas, rawState, FULLSCREEN_VS } from './gl.js';
 
 const NOISE_FS = `#version 300 es
 precision highp float;
@@ -75,6 +75,9 @@ uniform float uClearAmt;
 uniform float uSeed;
 uniform float uLightGain;
 uniform float uInkOut;     // 1: ink on the bare paper outside the painting still shows
+uniform float uSurface;    // 1: layers come from the 3D world, whose surfaces carry their own pigment noise
+uniform float uDepthFog;   // 1: mask g is the real haar density along the view ray
+uniform vec2 uFogOffset;   // css px: turns with the camera so banks of haar hold their bearing
 
 float hash(vec2 p) {
   p = fract(p * vec2(123.34, 456.21) + uSeed);
@@ -121,7 +124,7 @@ void main() {
   float water = msk.r;
 
   // ---- wobble: static wobble everywhere, gentle animation on water ----
-  vec2 wob = (nB.rg - 0.5) * uWobble;
+  vec2 wob = (nB.rg - 0.5) * uWobble * (1.0 - uSurface * 0.8);
   vec2 wav = vec2(0.0);
   if (water > 0.01) {
     float rip = sin(px.y * 0.22 + uTime * 0.9 + vnoise(pp * vec2(0.01, 0.05) + uTime * 0.05) * 6.0);
@@ -136,6 +139,11 @@ void main() {
 
   // bleed: washes soften and creep outward past their lines
   vec2 bd = (nB.ba - 0.5) * 14.0 * uBleed / uRes;
+  if (uSurface > 0.5) {
+    // bleed directions turn with the camera instead of sitting on the glass
+    vec2 bq = (pp + uFogOffset) * 0.02;
+    bd = (vec2(vnoise(bq), vnoise(bq + 17.3)) - 0.5) * 14.0 * uBleed / uRes;
+  }
   vec3 bleedC = textureLod(uPaint, uvP + bd, 1.5 + uBleed * 1.8).rgb;
   paint = mix(paint, bleedC, uBleed * 0.55);
 
@@ -145,16 +153,19 @@ void main() {
   float edgeD = 1.0 + uEdge * 1.25 * clamp(e, 0.0, 0.6) * (0.75 + 0.5 * pHi);
   paint = density(paint, edgeD);
 
-  // low frequency turbulence: uneven pigment within washes
-  float turb = nA.a;
+  // low frequency turbulence: uneven pigment within washes (3D surfaces paint their own, fixed to them)
+  float turb = mix(nA.a, 0.5, uSurface);
   paint = density(paint, 1.0 + (turb - 0.5) * 0.5);
   // pigment drifts warmer and cooler across a wash
-  paint *= mix(vec3(1.025, 1.0, 0.965), vec3(0.97, 0.995, 1.035), smoothstep(0.3, 0.7, nB.b));
+  paint *= mix(vec3(1.0), mix(vec3(1.025, 1.0, 0.965), vec3(0.97, 0.995, 1.035), smoothstep(0.3, 0.7, nB.b)), 1.0 - uSurface);
 
-  // granulation: pigment settles in the valleys of the paper, more in heavier washes
+  // granulation: pigment settles in the valleys of the paper, more in heavier washes.
+  // In the world, mask b carries grain noise written in each surface's own space (0.5 = none).
   float L = lum(paint);
-  float gran = (vnoise(pp * 0.42) * 0.5 + (1.0 - paperH) * 0.7) - 0.6;
-  paint = density(paint, 1.0 + gran * uGran * (0.45 + msk.b * 0.9) * (1.15 - L));
+  float gran2d = (vnoise(pp * 0.42) * 0.5 + (1.0 - paperH) * 0.7) - 0.6;
+  float gran3d = (msk.b - 0.5) * 1.6 + ((1.0 - paperH) * 0.7 - 0.35) * 0.55;
+  float gran = mix(gran2d * (0.45 + msk.b * 0.9), gran3d, uSurface);
+  paint = density(paint, 1.0 + gran * uGran * (1.15 - L));
 
   // sit the paint on the paper
   vec3 col = paint * (paperCol / PAPER);
@@ -166,24 +177,25 @@ void main() {
   float f2 = 0.5;
   if (uFog > 0.001 || uCloakAmt > 0.001) {
     // banks: wide and low (stretched across the screen), with thinner places between them
-    vec2 fogP = pp * vec2(0.0016, 0.0044);
+    vec2 fq = pp + uFogOffset;
+    vec2 fogP = fq * vec2(0.0016, 0.0044);
     float f1 = fbm(fogP + uWind * uTime * 0.018);
     f2 = fbm3(fogP * 2.3 - uWind.yx * uTime * 0.011 + 4.0);
-    float wisp = vnoise(pp * vec2(0.0035, 0.03) + vec2(uTime * 0.05, 0.0));
-    float fogW = mix(0.35, 1.0, msk.g);
+    float wisp = vnoise(fq * vec2(0.0035, 0.03) + vec2(uTime * 0.05, 0.0));
+    float fogW = mix(mix(0.35, 1.0, msk.g), msk.g, uDepthFog);
     float bank = smoothstep(0.36, 0.8, f1 * 0.72 + f2 * 0.42 + wisp * 0.12);
     fogD = uFog * fogW * clamp(0.2 + 0.95 * bank, 0.0, 1.0);
     if (uCloakAmt > 0.001) {
       // the cloak: mist that moves against the wind
       vec2 cd = (vUv - uCloak.xy) / max(uCloak.zw, vec2(1e-4));
       float cloakShape = exp(-dot(cd, cd) * 1.4);
-      float cf = fbm3(pp * 0.009 - uWind * uTime * 0.06 + vec2(0.0, uTime * 0.03));
+      float cf = fbm3(fq * 0.009 - uWind * uTime * 0.06 + vec2(0.0, uTime * 0.03));
       fogD = max(fogD, uCloakAmt * cloakShape * clamp(0.25 + cf * 1.1, 0.0, 1.0));
     }
     if (uClearAmt > 0.001) {
       // a parting in the mist
       vec2 kd = (vUv - uClear.xy) / max(uClear.zw, vec2(1e-4));
-      float hole = exp(-dot(kd, kd) * 1.6) * (0.7 + 0.5 * vnoise(pp * 0.01 + uTime * 0.02));
+      float hole = exp(-dot(kd, kd) * 1.6) * (0.7 + 0.5 * vnoise(fq * 0.01 + uTime * 0.02));
       fogD *= 1.0 - clamp(uClearAmt * hole, 0.0, 1.0);
     }
     fogD = clamp(fogD, 0.0, 0.97);
@@ -279,6 +291,7 @@ export class Watercolor {
       margin: [0.012, 0.016, 0.988, 0.984],
       cloak: [0.5, 0.5, 0.05, 0.2], cloakAmt: 0, clear: [0.5, 0.5, 0.1, 0.1], clearAmt: 0,
       seed: Math.random() * 10,
+      surface: 0, depthFog: 0, fogOffset: [0, 0],
     };
   }
 
@@ -298,6 +311,7 @@ export class Watercolor {
   buildNoise(w, h) {
     const gl = this.gl;
     if (this.noise) { deleteTarget(gl, this.noise.a); deleteTarget(gl, this.noise.b); gl.deleteFramebuffer(this.noise.fb); }
+    rawState(gl);
     const a = createTarget(gl, w, h), b = createTarget(gl, w, h);
     const fb = gl.createFramebuffer();
     gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
@@ -326,6 +340,7 @@ export class Watercolor {
   snapshot() {
     const gl = this.gl;
     if (!this.target) return;
+    rawState(gl);
     gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.target.fb);
     gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.prev.fb);
     gl.blitFramebuffer(0, 0, this.target.w, this.target.h, 0, 0, this.prev.w, this.prev.h, gl.COLOR_BUFFER_BIT, gl.NEAREST);
@@ -334,9 +349,13 @@ export class Watercolor {
     this.hasPrev = true;
   }
 
-  render(cssW, cssH, time) {
+  // `src` (optional) holds GPU textures for the four layers, e.g. from the 3D world's compose pass;
+  // without it the canvases last passed to upload() are used.
+  render(cssW, cssH, time, src = null) {
     const gl = this.gl, { program, uniforms: U } = this.prog, u = this.u;
+    rawState(gl);
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.target.fb);
+    gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
     gl.viewport(0, 0, this.target.w, this.target.h);
     gl.useProgram(program);
     gl.bindVertexArray(this.vao);
@@ -345,10 +364,10 @@ export class Watercolor {
       gl.bindTexture(gl.TEXTURE_2D, tex);
       gl.uniform1i(U[name], unit);
     };
-    bind('uPaint', this.tex.paint.tex, 0);
-    bind('uInk', this.tex.ink.tex, 1);
-    bind('uLight', this.tex.light.tex, 2);
-    bind('uMask', this.tex.mask.tex, 3);
+    bind('uPaint', src ? src.paint : this.tex.paint.tex, 0);
+    bind('uInk', src ? src.ink : this.tex.ink.tex, 1);
+    bind('uLight', src ? src.light : this.tex.light.tex, 2);
+    bind('uMask', src ? src.mask : this.tex.mask.tex, 3);
     bind('uPrev', this.prev.tex, 4);
     bind('uNoiseA', this.noise.a.tex, 5);
     bind('uNoiseB', this.noise.b.tex, 6);
@@ -377,6 +396,9 @@ export class Watercolor {
     gl.uniform4fv(U.uClear, u.clear);
     gl.uniform1f(U.uClearAmt, u.clearAmt);
     gl.uniform1f(U.uSeed, u.seed);
+    gl.uniform1f(U.uSurface, src ? u.surface : 0);
+    gl.uniform1f(U.uDepthFog, src ? u.depthFog : 0);
+    gl.uniform2fv(U.uFogOffset, src ? u.fogOffset : [0, 0]);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     // present

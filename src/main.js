@@ -21,6 +21,8 @@ import { createAudio } from './audio/audio.js';
 const params = new URLSearchParams(location.search);
 const DEBUG = params.get('debug') === '1';
 const AUTOPLAY = DEBUG && params.get('autoplay') === '1';
+// The first-person game is opt-in while it is being built; ?view=classic is the 2D game.
+const FP = params.get('view') === 'fp';
 
 const canvas = document.getElementById('stage');
 const gl = createGL(canvas);
@@ -41,7 +43,7 @@ const LOOK_DEFAULT = {
 
 export const game = {
   gl, wc, layers, input, canvas,
-  debug: DEBUG, autoplay: AUTOPLAY,
+  debug: DEBUG, autoplay: AUTOPLAY, fp: FP, world: null,
   settings: Store.loadSettings(),
   state: Store.freshProgress(),
   saved: Store.loadProgress(),
@@ -64,6 +66,7 @@ export const game = {
       wc.u.trans = 0;
       wc.u.transCenter = opts.center || [0.5, 0.5];
     }
+    if (this.scene && this.scene !== sc && this.scene.exit) this.scene.exit();
     this.scene = sc;
     this.sceneName = name;
     if (opts.snapLook) this.snapLook = true;
@@ -196,6 +199,7 @@ function resize() {
   canvas.width = bw; canvas.height = bh;
   wc.resize(bw, bh, cssW, cssH);
   layers.resize(cssW, cssH, dpr);
+  game.world?.resize(layers);
   clearMeasureCache();
 }
 window.addEventListener('resize', resize);
@@ -236,12 +240,26 @@ function step(dt) {
   game.time += dt;
   try {
     input.frame();
-    if (game.scene) {
-      game.scene.update(dt);
-      layers.begin(game.scene.safe || { w: 1600, h: 1000 });
-      game.scene.draw(layers);
-      if (game.overlay) game.overlay.draw(layers, dt);
-      wc.u.margin = layers.marginUv(game.scene.paintRect ? game.scene.paintRect(layers) : defaultPaintRect(layers));
+    const sc = game.scene;
+    const three = !!(sc && sc.three && game.world);
+    let hud = null;
+    if (sc) {
+      sc.update(dt);
+      if (three) {
+        // the world paints itself; the canvases only carry lettering and panels laid over it
+        if (game.overlay || (sc.hudActive && sc.hudActive())) {
+          layers.begin(sc.safe || { w: 1600, h: 1000 }, { paper: null });
+          sc.draw(layers);
+          if (game.overlay) game.overlay.draw(layers, dt);
+          hud = layers;
+        } else layers.fit(sc.safe || { w: 1600, h: 1000 });
+        wc.u.margin = layers.marginUv({ x0: -1e5, y0: -1e5, x1: 1e5, y1: 1e5 });
+      } else {
+        layers.begin(sc.safe || { w: 1600, h: 1000 });
+        sc.draw(layers);
+        if (game.overlay) game.overlay.draw(layers, dt);
+        wc.u.margin = layers.marginUv(sc.paintRect ? sc.paintRect(layers) : defaultPaintRect(layers));
+      }
     }
     applyLook(dt);
     if (game.transition) {
@@ -249,8 +267,15 @@ function step(dt) {
       wc.u.trans = Math.min(1, game.transition.t / game.transition.dur);
       if (wc.u.trans >= 1) game.transition = null;
     }
-    wc.upload(layers);
-    wc.render(layers.cssW, layers.cssH, game.time);
+    if (three) {
+      wc.u.surface = 1; wc.u.depthFog = 1;
+      wc.u.fogOffset = game.world.fogOffset();
+      const src = game.world.render(hud, game.time);
+      wc.render(layers.cssW, layers.cssH, game.time, src);
+    } else {
+      wc.upload(layers);
+      wc.render(layers.cssW, layers.cssH, game.time);
+    }
     canvas.style.cursor = input.cursor() || (game.scene && game.scene.cursor ? game.scene.cursor() : 'default') || 'default';
     if (game.audio) game.audio.tick(dt);
     if (DEBUG && game.debugPanel) game.debugPanel.tick();
@@ -290,13 +315,22 @@ async function boot() {
     ]);
   } catch { /* fonts are optional */ }
   clearMeasureCache();
+  if (FP) {
+    const { World } = await import('./world/world.js');
+    game.world = new World(game);
+    game.world.resize(layers);
+    const { TestRoomScene } = await import('./world/scenes/test-room.js');
+    game.scenes.testroom = new TestRoomScene(game);
+  }
   const loading = document.getElementById('loading');
   loading.style.opacity = '0';
   setTimeout(() => loading.remove(), 1400);
 
   const id = parseInt(params.get('night') || '0', 10);
   const phase = params.get('phase');
-  if (DEBUG && params.get('finale')) {
+  if (FP && DEBUG && params.get('test') === 'room') {
+    game.go('testroom', {}, { transition: 'none' });
+  } else if (DEBUG && params.get('finale')) {
     game.night = nightById(LAST_NIGHT);
     game.go('finale', { part: params.get('finale') }, { transition: 'none' });
   } else if (DEBUG && id) {

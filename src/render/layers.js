@@ -54,7 +54,7 @@ export class Layers {
     return [s, 0, 0, s, this.ox * o, this.oy * o];
   }
 
-  // Prepare all layers for a new frame.
+  // Prepare all layers for a new frame. `paper: null` leaves paint transparent (a HUD over the 3D world).
   begin(safe, { paper = '#F2EAD9' } = {}) {
     this.fit(safe);
     for (const n of NAMES) {
@@ -62,8 +62,8 @@ export class Layers {
       c.setTransform(1, 0, 0, 1, 0, 0);
       c.globalAlpha = 1;
       c.globalCompositeOperation = 'source-over';
-      if (n === 'paint') { c.fillStyle = paper; c.fillRect(0, 0, c.canvas.width, c.canvas.height); }
-      else if (n === 'ink') c.clearRect(0, 0, c.canvas.width, c.canvas.height);
+      if (n === 'paint' && paper) { c.fillStyle = paper; c.fillRect(0, 0, c.canvas.width, c.canvas.height); }
+      else if (n === 'ink' || n === 'paint') c.clearRect(0, 0, c.canvas.width, c.canvas.height);
       else { c.fillStyle = '#000'; c.fillRect(0, 0, c.canvas.width, c.canvas.height); }
       c.setTransform(...this.transformFor(n));
       this.dirty[n] = true;
