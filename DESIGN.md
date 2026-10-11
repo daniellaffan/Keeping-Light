@@ -29,10 +29,14 @@ src/render/scenes/*.js     title, bay (dusk/night/dawn/haar), logbook, headland 
 src/game/nights.js         night definitions (mechanics) — the table from the brief, as data
 src/game/chart.js          bay geometry: land, sea stacks, reefs, tide, projection, routes, A*
 src/game/ships.js          route following, clearance, collision, arrival
-src/audio/*.js             procedural music, ambience, sfx (Web Audio)
+src/audio/*.js             procedural music, ambience, sfx (Web Audio); audio.js routes them
 src/ui/input.js            pointer/touch/keyboard, immediate-mode hit regions
+src/ui/settings.js         sound control (HTML speaker button, volume, mute)
+src/ui/debug.js            ?debug=1 panel, keys and jumps
 src/data/*.js              all writing: logbook entries, village scenes, ship names, records
 tools/check-nights.mjs     node script: validates every night is solvable, autoplan works
+tools/serve.py             no-cache static server for development
+docs/screenshots/          one screenshot of every distinct scene
 ```
 
 ## Rendering architecture
@@ -114,5 +118,52 @@ does bloom transitions between them. Save happens at the end of each dawn.
   in the overdue record, the old keeper's oldest pages, the other keepers' runs, Síle's drawing
   and the schoolroom board.
 * **One visit per day.** Days are seasoning; you pick one place on the headland map, then dusk.
-* **Canvas UI.** All UI, including the logbook and settings, is painted and lettered on canvas so
-  it goes through the same watercolor pass. The debug panel is plain HTML on purpose.
+* **Canvas UI.** All game UI, including the logbook, the headland map and the title, is painted and
+  lettered on canvas, so it goes through the same watercolor pass. Two things are plain HTML on
+  purpose: the debug panel, and the small speaker button for sound. The speaker needs a real
+  slider and checkbox for accessibility, and it has to work before the first gesture starts audio.
+* **When.** Nights 1–16 run from 2 to 17 September 1957. The epilogue nights have no dates; the
+  Keeper stops writing them. Internally E1–E3 are nights 17–19 (act 5), so the debug tools, saving
+  and autoplay treat them like any other night.
+* **The Rakes.** I added one reef that the brief doesn't name: a long line of rocks across the
+  north channel, on nights 6, 8, 11 and 14. The middle nights were too alike without it, because the
+  same short cut always worked. Night 6's note mentions it so it's fair. `tools/check-nights.mjs`
+  checks every night stays solvable within its limits.
+* **Dawn page.** Under the "as sailed" chart the Keeper writes the watch: lamp lit, lamp out, then
+  the oil. The times are approximate sunset and sunrise for the west coast in September, summer
+  time. The oil line gets shorter each act and is gone by the final night. Below it is a row of
+  little boats, one for each that came in; a struck boat gets a small cross.
+* **Phones.** When the window is taller than it is wide (aspect below 0.95), the logbook shows one page at a time with *notes* / *chart*
+  tabs. The bay scenes are composed for landscape, so in portrait they sit inside the painted page
+  with paper above and below. That's playable, but they're small.
+* **Ink outside the painting.** Text is lettered into the margin outside the ragged painted area
+  in a few places: the stairs, the end card, and the logbook tabs. The shader has an opt-in
+  `uInkOut` uniform for those scenes. It is off elsewhere so stray bay linework doesn't show at the
+  edges.
+* **Haar** is drawn in the shader, not painted: wide, low fBm banks stretched horizontally, with
+  thinner places between them. It is denser over water (mask G), and the lamp's light scatters into
+  it. On night scenes the mist is a pale moonlit grey rather than a dark blue, so it reads as mist
+  and not as more sea.
+* **Manannán** is a tall cloaked shape standing on the water at the edge of the beam: no face, no
+  detail. It fades in and out of the mist that gathers at his feet. The shader's "cloak" uniform
+  makes that mist drift against the wind, as the brief describes. While he is there the music and
+  ambience drop almost to nothing.
+* **Mag Mell** is a small glowing island at the far western edge of the bay on night 13. It has
+  soft hills, trees and a few gold and rose points, and is gone before you can look at it properly.
+* **The ending.** The stairs are a helix of stone treads seen from below, one tread per click or
+  tap, with a short pause so you can't rush them. The last sunset reuses the bay at golden hour. The
+  lamp lights itself, the Keeper (a small ink figure) sits beside it, and one boat sails out past
+  the stacks. Then the paper bleeds outward from the lamp until the frame is white. The end card is
+  title, one line and a gold dot, then back to the title.
+* **Sound.**
+  * Music: one swung 70 bpm lo-fi engine with modes per act. Act 1 is full and warm. Act 2 is
+    detuned, and the hats drop out. Act 3 is thin and sparse. The final night has no beat. The
+    epilogue is a few piano notes. The stairs have a few sparser notes still, and the sunset has only
+    the sea and one held note.
+  * Ambience: surf from brown noise with slow swells, wind gusts by weather, rain, gulls by day in
+    acts 1–3, and the lamp hum indoors. Haar lowers the low-pass cutoff outdoors.
+  * Effects: pencil grains for waypoints, a rising phrase on inking, a warm swell when the lamp
+    lights, a chime in F pentatonic for each boat home, a hollow chime for one that is gone, and a
+    soft low thud on rock.
+* **Ship names** are plain English or real Irish words: *Réalt na Mara* (star of the sea),
+  *An Faoileán* (the gull), *Bríd Óg*, *Mo Stór*, *Neasa*. Nothing is invented.
