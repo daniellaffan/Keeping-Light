@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import { LAND, STACKS, REEFS, PIERS, pointInPoly } from '../game/chart.js';
 import { villageSites } from '../render/scenes/bay-paint.js';
 import { UNIT, TOWER, CLIFF_TOP, ROOM_YAW } from './geo.js';
+import { laneDist } from './lane.js';
 import { wash, glowMaterial, beamMaterial } from './materials.js';
 import { Builder } from './build.js';
 import { rng, noise1, fbm1, fbm2, makeCanvas, smooth } from '../render/paint.js';
@@ -27,37 +28,51 @@ function segD(px, py, ax, ay, bx, by) {
   const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy || 1e-9)));
   return Math.hypot(px - ax - dx * t, py - ay - dy * t);
 }
-function signedDist(x, y, poly) {
+// The shore: only the coast edges of the two land polygons count (not the seam where they meet at the
+// head of the bay, nor their far edges off the chart), so the land runs on unbroken round the bay.
+const coastEdges = (poly) => {
+  const out = [];
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[j], b = poly[i];
+    if (a[0] >= 101.4 && b[0] >= 101.4) continue;
+    if ((a[1] === b[1] && Math.abs(a[1]) >= 40) || (a[0] === b[0] && Math.abs(a[0]) >= 100)) continue;
+    out.push([a[0], a[1], b[0], b[1]]);
+  }
+  return out;
+};
+const COAST = [...coastEdges(LAND.north), ...coastEdges(LAND.south)];
+function shoreDist(x, y) {
   let d = Infinity;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) d = Math.min(d, segD(x, y, poly[j][0], poly[j][1], poly[i][0], poly[i][1]));
-  return pointInPoly(x, y, poly) ? d : -d;
+  for (const e of COAST) d = Math.min(d, segD(x, y, e[0], e[1], e[2], e[3]));
+  return d;
 }
 
 // height of the ground (m above mid-tide) at a chart point
 export function landHeight(x, y) {
-  const dn = signedDist(x, y, LAND.north), ds = signedDist(x, y, LAND.south);
-  const north = dn > ds, d = Math.max(dn, ds);
+  const inN = pointInPoly(x, y, LAND.north), inS = pointInPoly(x, y, LAND.south);
+  const d = inN || inS ? shoreDist(x, y) : -shoreDist(x, y);
   if (d < 0) return Math.max(-7, -1.4 + d * 2.2);
-  let top;
-  if (north) {
-    top = (1.6 + 1.4 * fbm1(x * 0.08, 4) + (x < 16 ? (16 - x) * 0.18 : 0) - (x > 78 && x < 97 ? 1.2 : 0)) * UNIT;
-    top += Math.max(0, -y - 3) * 0.9;                       // the land rises inland, to the hills
-  } else {
-    top = x < 24 ? CLIFF_TOP : lerp(CLIFF_TOP, 11 + 7 * fbm1(x * 0.07, 9), smooth(24, 40, x));
-    top += Math.max(0, y - 62) * 0.9;
-  }
+  // the north shore's low ground and the south headland's high ground, run together at the head of the bay
+  const topN = (1.6 + 1.4 * fbm1(x * 0.08, 4) + (x < 16 ? (16 - x) * 0.18 : 0) - 1.2 * smooth(76, 80, x) * smooth(99, 95, x)) * UNIT
+    + Math.max(0, -y - 3) * 0.9;                       // the land rises inland, to the hills
+  const topS = (x < 24 ? CLIFF_TOP : lerp(CLIFF_TOP, 11 + 7 * fbm1(x * 0.07, 9), smooth(24, 40, x))) + Math.max(0, y - 62) * 0.9;
+  const wN = x > 96 ? smooth(30, 14, y) : inN ? 1 : 0;
+  const top = lerp(topS, topN, wN);
   const cliff = Math.pow(smooth(0, 0.9, d), 0.6);
   let h = -1.4 + (top + 1.4) * cliff;
   // rolling ground inland
   h += (fbm2(x * 0.07, y * 0.07, 3) - 0.5) * 9 * smooth(1.2, 6, d);
+  // the village's ground sits low by the water, but never down to the tide
+  h = Math.max(h, -1.4 + 4.2 * cliff);
   // the tower stands on level ground
   const dt = Math.hypot(x - TOWER.x / UNIT, y - TOWER.z / UNIT);
   h = lerp(Math.min(h, CLIFF_TOP - 0.05), h, smooth(2.6, 5, dt));
   return h;
 }
 
+const GRID = { x0: -34, x1: 142, y0: -52, y1: 104, step: 0.6 };
 function terrain() {
-  const x0 = -34, x1 = 142, y0 = -52, y1 = 104, step = 0.6;
+  const { x0, x1, y0, y1, step } = GRID;
   const nx = Math.round((x1 - x0) / step) + 1, ny = Math.round((y1 - y0) / step) + 1;
   const pos = new Float32Array(nx * ny * 3), tint = new Float32Array(nx * ny * 4), uv = new Float32Array(nx * ny * 2);
   const hs = new Float32Array(nx * ny);
@@ -87,7 +102,7 @@ function terrain() {
   // pigment: grass on the tops, bare rock where it falls steeply, shingle along the shore
   const n = g.attributes.normal;
   const grass = new THREE.Color('#7E9157'), grass2 = new THREE.Color('#687C47'), heath = new THREE.Color('#8C8458');
-  const rock = new THREE.Color('#9A8572'), rock2 = new THREE.Color('#7E6E62'), shingle = new THREE.Color('#BCAA8C'), bed = new THREE.Color('#5E6E6C');
+  const rock = new THREE.Color('#9A8572'), rock2 = new THREE.Color('#7E6E62'), shingle = new THREE.Color('#BCAA8C'), bed = new THREE.Color('#5E6E6C'), lane = new THREE.Color('#B59E7C');
   const c = new THREE.Color(), c2 = new THREE.Color();
   for (let k = 0; k < nx * ny; k++) {
     const x = pos[k * 3] / UNIT, y = pos[k * 3 + 2] / UNIT, h = hs[k];
@@ -97,13 +112,16 @@ function terrain() {
     c2.copy(rock).lerp(rock2, smooth(0.3, 0.75, fbm2(x * 0.4, y * 0.9, 6)));
     c.lerp(c2, smooth(0.86, 0.62, ny_));
     c.lerp(shingle, smooth(2.6, 1.2, h) * smooth(-1.6, -0.6, h) * 0.9);
+    // the lane, worn into the grass
+    if (h > 1) c.lerp(lane, smooth(1.1, 0.35, laneDist(x, y)) * 0.75);
     c.lerp(bed, smooth(-1.2, -2.4, h));
     tint[k * 4] = c.r; tint[k * 4 + 1] = c.g; tint[k * 4 + 2] = c.b; tint[k * 4 + 3] = 0;
   }
   g.setAttribute('tint', new THREE.BufferAttribute(tint, 4));
-  const mat = wash({ color: '#ffffff', color2: '#F3EFE6', tint: true, world: true, noiseScale: 0.05, line: 0.9, crease: 0.55, gran: 0.95 });
+  const mat = wash({ color: '#ffffff', color2: '#F3EFE6', tint: true, world: true, noiseScale: 0.05, line: 0.9, crease: 0.3, gran: 0.95 });
   const m = new THREE.Mesh(g, mat);
   m.matrixAutoUpdate = false;
+  m.userData.grid = { ...GRID, nx, ny, hs };
   return m;
 }
 
@@ -387,6 +405,17 @@ export class Bay {
     this.camPos = new THREE.Vector3();
   }
 
+  // the height of the ground mesh itself (not the function it was sampled from) at world x, z
+  groundAt(wx, wz) {
+    const G = this.land.userData.grid;
+    const fx = (wx / UNIT - G.x0) / G.step, fz = (wz / UNIT - G.y0) / G.step;
+    const i = Math.max(0, Math.min(G.nx - 2, Math.floor(fx))), j = Math.max(0, Math.min(G.ny - 2, Math.floor(fz)));
+    const u = Math.max(0, Math.min(1, fx - i)), v = Math.max(0, Math.min(1, fz - j));
+    const hs = G.hs, a = hs[j * G.nx + i], b = hs[j * G.nx + i + 1], c = hs[(j + 1) * G.nx + i], d = hs[(j + 1) * G.nx + i + 1];
+    // the cell is split along b–c, as the mesh is
+    return u + v <= 1 ? a + (b - a) * u + (c - a) * v : d + (c - d) * (1 - u) + (b - d) * (1 - v);
+  }
+
   makeSea() {
     const NR = 34, NT = 96, RMAX = 2800;
     const cx = TOWER.x, cz = TOWER.z;
@@ -447,7 +476,11 @@ export class Bay {
     const b = new Builder(77);
     this.windows = [];
     const r = rng(78);
+    // what you can't walk through, as circles in world x, z
+    this.solids = [];
     sites.forEach(([x, y], i) => {
+      // the lane and the slip down to the harbour run between the houses
+      if (laneDist(x, y) < 2.0) { this.windows.push(null); return; }
       const big = i === 5 || i === 11 || i === 2;
       const w = (6 + noise1(i, 3) * 3) * (big ? 1.4 : 1), d = 5 + r() * 1.2, h = 3.4 + noise1(i, 4) * 1.4;
       const [wx, wz] = C(x, y);
@@ -456,6 +489,7 @@ export class Bay {
       g = Math.max(g, 1.2);
       const rot = [0, (r() - 0.5) * 0.25, 0];
       b.box(M.ww, w, h + 1, d, [wx, g + (h - 1) / 2, wz], { rot });
+      for (const k of [-0.25, 0.25]) this.solids.push([wx + k * w, wz, d / 2 + 0.4]);
       const pitch = 2.2 + r() * 0.8;
       b.add(new THREE.CylinderGeometry(1, 1, 1, 3), M.roof, { pos: [wx, g + h + pitch / 3 - 0.02, wz], rot: [-Math.PI / 2, Math.PI / 2 + rot[1], 0], scale: [(d / 2 + 0.35) / 0.866, w + 0.5, pitch / 1.5] });
       b.box(M.roof, 0.7, 1.6, 0.7, [wx + w * 0.36, g + h + pitch * 0.55, wz], { rot });
@@ -486,7 +520,7 @@ export class Bay {
     const total = this.windows.length;
     const lit = night.lightsCount ? night.lights : Math.round((night.lights ?? 1) * total);
     const on = new Set(this.windowOrder.slice(0, lit));
-    this.windows.forEach((w, i) => { w.glow.visible = w.halo.visible = w.refl.visible = on.has(i); });
+    this.windows.forEach((w, i) => { if (w) w.glow.visible = w.halo.visible = w.refl.visible = on.has(i); });
   }
 
   buildPiers() {

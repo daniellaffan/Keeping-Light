@@ -102,17 +102,28 @@ export function buildRoom() {
   // one transom, above the eye of someone sitting, so the horizon runs clear across the panes
   for (const k of [0.6]) b.add(new THREE.BoxGeometry(w.half * 2, 0.03, 0.04), M.pine, { pos: [fx, w.sill + fh * k, fz], rot: frameRot });
 
-  // door reveal and the door itself, shut
+  // door reveal, a stone step down to the headland, and the door itself on its hinge (it swings in)
   reveal(b, M.stone, d.deg, d.half, 0, d.top);
+  const [stx, stz] = polar(d.deg, R + ROOM.wall + 0.3);
+  b.box(M.stone, d.half * 2 + 0.3, 0.16, 0.6, [stx, -0.08, stz], { rot: [0, facing(d.deg), 0] });
   const [dx, dz] = polar(d.deg, R + 0.36);
-  const dRot = [0, facing(d.deg), 0];
+  const door = new THREE.Group();
+  door.name = 'door';
+  door.position.set(...offset(dx, dz, d.deg, -d.half, 0));
+  door.rotation.y = facing(d.deg);
+  const swing = new THREE.Group();
+  door.add(swing);
+  const db = new Builder(13);
   for (let i = 0; i < 5; i++) {
-    const off = -d.half + 0.1 + i * (d.half * 2 - 0.2) / 4;
-    b.add(new THREE.BoxGeometry((d.half * 2) / 5 + 0.004, d.top - 0.02, 0.05), M.oak, { pos: offset(dx, dz, d.deg, off, (d.top - 0.02) / 2), rot: dRot });
+    const off = 0.1 + i * (d.half * 2 - 0.2) / 4;
+    db.add(new THREE.BoxGeometry((d.half * 2) / 5 + 0.004, d.top - 0.02, 0.05), M.oak, { pos: [off, (d.top - 0.02) / 2, 0] });
   }
-  for (const y of [0.35, 1.7]) b.add(new THREE.BoxGeometry(d.half * 2 - 0.08, 0.06, 0.03), M.iron, { pos: offset(...polar(d.deg, R + 0.33), d.deg, 0, y), rot: dRot });
-  const ring = new THREE.TorusGeometry(0.06, 0.012, 6, 16);
-  b.add(ring, M.iron, { pos: offset(...polar(d.deg, R + 0.32), d.deg, d.half - 0.2, 1.0), rot: [0, facing(d.deg), 0] });
+  for (const y of [0.35, 1.7]) db.add(new THREE.BoxGeometry(d.half * 2 - 0.08, 0.06, 0.03), M.iron, { pos: [d.half, y, 0.03] });
+  db.add(new THREE.TorusGeometry(0.06, 0.012, 6, 16), M.iron, { pos: [d.half * 2 - 0.2, 1.0, 0.04] });
+  swing.add(db.finish('door'));
+  const ringAt = new THREE.Object3D();
+  ringAt.position.set(d.half * 2 - 0.2, 1.0, 0.04);
+  swing.add(ringAt);
   // oilskin on a peg by the door
   const [px, pz] = polar(d.deg + 16, R - 0.12);
   b.cyl(M.oak, 0.02, 0.02, 0.12, [px, 1.75, pz], { rot: [Math.PI / 2, 0, 0], seg: 6 });
@@ -298,9 +309,10 @@ export function buildRoom() {
 
   const group = new THREE.Group();
   group.name = 'watchroom';
-  group.add(b.finish('room'), sb.finish('shelves'), table, control, clock, stove, chair, mug, sill.group);
+  group.add(b.finish('room'), sb.finish('shelves'), table, control, clock, stove, chair, mug, sill.group, door, buildTop(M));
   return {
     group, table, lamp, flame, halo, clock, hourHand, minHand, lever: pivot, stove, stoveGlow, chair, mug, M, sill,
+    door: { pivot: door, swing, ring: ringAt },
     // 2D obstacles for walking, in room space: circles [x, z, r] and the stair annulus
     obstacles: {
       circles: [[vx, vz, 0.55], [cxx, czz, 0.5]],
@@ -309,6 +321,38 @@ export function buildRoom() {
       radius: R - 0.38,
     },
   };
+}
+
+// The tower above the watch room, as it's seen from the headland: the gallery with its rail, the
+// lantern's glazing and the dome over it.
+function buildTop(M) {
+  const b = new Builder(29);
+  const { R, H, wall } = ROOM, RO = R + wall, top = H + 0.6;
+  const white = wash({ color: '#EEE8DA', color2: '#E2DAC6', map: plasterTex(5), line: 1, crease: 0.5, gran: 0.6 });
+  const dark = wash({ color: '#2E3436', color2: '#3A4042', line: 1, crease: 0.6, gran: 0.5 });
+  // the gallery floor, a lip out beyond the wall
+  b.cyl(M.stone, RO + 0.4, RO + 0.3, 0.16, [0, top + 0.08, 0], { seg: 40 });
+  // the rail: posts and a ring
+  for (let i = 0; i < 24; i++) {
+    const [x, z] = polar(i * 15, RO + 0.32);
+    b.cyl(dark, 0.02, 0.02, 0.95, [x, top + 0.62, z], { seg: 5 });
+  }
+  b.add(new THREE.TorusGeometry(RO + 0.32, 0.03, 5, 48), dark, { pos: [0, top + 1.1, 0], rot: [Math.PI / 2, 0, 0], wonk: 0 });
+  // the lantern: a low wall, the glazing bars (the glass itself left clear, so the lamp and its beam
+  // show through), a dome and a ventilator ball. The lamp (bay.js LAMP) sits in the glazing.
+  b.cyl(white, 1.7, 1.75, 0.4, [0, top + 0.3, 0], { seg: 24 });
+  for (let i = 0; i < 12; i++) {
+    const [x, z] = polar(i * 30, 1.62);
+    b.cyl(dark, 0.03, 0.03, 1.5, [x, top + 1.25, z], { seg: 4 });
+  }
+  for (const y of [0.5, 1.25]) b.add(new THREE.TorusGeometry(1.62, 0.025, 4, 24), dark, { pos: [0, top + y, 0], rot: [Math.PI / 2, 0, 0], wonk: 0 });
+  b.cyl(dark, 1.95, 1.7, 0.12, [0, top + 2.05, 0], { seg: 24 });
+  b.add(new THREE.SphereGeometry(1.75, 24, 8, 0, Math.PI * 2, 0, Math.PI / 2), dark, { pos: [0, top + 2.07, 0], scale: [1, 0.55, 1], wonk: 0 });
+  b.add(new THREE.SphereGeometry(0.18, 10, 8), dark, { pos: [0, top + 3.1, 0] });
+  // the lens, brass and glass, in the middle of the lantern
+  b.cyl(M.brass, 0.45, 0.45, 0.7, [0, top + 0.78, 0], { seg: 12 });
+  b.cyl(M.iron, 0.22, 0.28, 0.3, [0, top + 0.28, 0], { seg: 10 });
+  return b.finish('tower-top');
 }
 
 // --- helpers ---
