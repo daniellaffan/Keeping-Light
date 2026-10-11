@@ -1280,6 +1280,13 @@ export class Keeper {
     c.position.copy(k.pos);
     c.rotation.set(k.pitch, k.yaw, k.roll, 'YXZ');
     if (Math.abs(c.fov - k.fov) > 0.01) { c.fov = k.fov; c.updateProjectionMatrix(); }
+    // debug: the hands review can look from somewhere else without moving the body the arms hang from
+    if (this.camOverride) {
+      const o = this.camOverride;
+      c.position.copy(o.pos);
+      c.lookAt(o.target);
+      if (Math.abs(c.fov - o.fov) > 0.01) { c.fov = o.fov; c.updateProjectionMatrix(); }
+    }
     c.updateMatrixWorld(true);
   }
 

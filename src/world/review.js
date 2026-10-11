@@ -104,9 +104,28 @@ export function installReview(game) {
     game.step(40, 1 / 30);
   }
 
+  // a close look at one hand: the camera `dist` m from the wrist's middle, from a direction given in the
+  // hand's own frame (az round it, el above it), the body left where the pose put it
+  function studio(pose, { hand = 'R', az = 0, el = 0.6, dist = 0.32, fov = 30, light = 0, at = [0, 0, -0.07] } = {}) {
+    game.transition = null;
+    k.review(pose, LIGHTS[light][0], LIGHTS[light][1]);
+    k.camOverride = null;
+    game.snapLook = true;
+    game.step(30, 1 / 30);
+    const w = k.hands[hand].B.wrist;
+    w.updateWorldMatrix(true, false);
+    const target = new THREE.Vector3(...at).applyMatrix4(w.matrixWorld);
+    const q = new THREE.Quaternion().setFromRotationMatrix(w.matrixWorld);
+    const dir = new THREE.Vector3(Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el)).applyQuaternion(q);
+    k.camOverride = { pos: target.clone().addScaledVector(dir, dist), target, fov };
+    game.step(2, 1 / 30);
+  }
+
   window.__review = {
     fit,
     one,
+    studio,
+    off() { k.camOverride = null; },
     async hands(list = POSE_NAMES, opts) {
       game.transition = null;
       const out = {};

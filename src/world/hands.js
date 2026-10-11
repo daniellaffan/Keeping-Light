@@ -1,9 +1,12 @@
 // The keeper's forearms and hands: the only part of them ever seen.
 //
-// Each arm is one skinned mesh lofted along its bones: forearm, wrist, palm, three phalanges to each
-// finger, and a thumb with its CMC, MCP and IP joints. The jumper sleeve, pushed up to mid-forearm, is a
-// second skinned mesh on the same skeleton. Rest pose (arm space, metres): shoulder at the origin, the
-// arm straight along -Z, palm down, thumb toward -X (the right hand; the left is built mirrored).
+// Each arm is one skinned mesh: forearm, wrist, palm, three phalanges to each finger, and a thumb with
+// its CMC, MCP and IP joints, all one continuous skin (built as a distance field in handmesh.js: an old
+// man's hands, bony at the knuckles, the tendons and veins standing up on the back). The jumper sleeve,
+// pushed up to mid-forearm, is a second skinned mesh on the same skeleton. Rest pose (arm space,
+// metres): shoulder at the origin, the arm straight along -Z, palm down, thumb toward -X (the right
+// hand; the left is built mirrored). At rest the fingers are spread, so the skin between them could be
+// told apart when it was built; poses set every joint absolutely.
 //
 // Placing an arm: the wrist gets a target (position + orientation) from the current pose; a two-bone IK
 // from a shoulder fixed to the body finds the elbow, and the forearm's roll is shared between the elbow,
@@ -11,28 +14,83 @@
 import * as THREE from 'three';
 import { wash } from './materials.js';
 import { knitTex } from './textures.js';
+import { buildHandField, meshField, skinVertices } from './handmesh.js';
 
 const UPPER = 0.30, FORE = 0.26;
 
-// Finger knuckles (wrist space), phalanx lengths, radii at knuckle / PIP / DIP / near the tip.
+// Finger knuckles (wrist space), phalanx lengths; `out` is which way a positive spread turns the finger.
+// `fan` is the spread the skin was built at; `nat` the spread a hand at ease falls into.
 const FINGERS = {
-  index: { base: [-0.026, 0.004, -0.084], len: [0.041, 0.025, 0.020], r: [0.0094, 0.0087, 0.0079, 0.0068], out: 1 },
-  middle: { base: [-0.007, 0.006, -0.088], len: [0.045, 0.028, 0.021], r: [0.0098, 0.0090, 0.0081, 0.0069], out: 0.25 },
-  ring: { base: [0.012, 0.004, -0.084], len: [0.042, 0.026, 0.020], r: [0.0093, 0.0085, 0.0077, 0.0065], out: -1 },
-  little: { base: [0.028, -0.001, -0.074], len: [0.033, 0.021, 0.018], r: [0.0081, 0.0074, 0.0067, 0.0057], out: -1 },
+  index: { base: [-0.026, 0.004, -0.084], len: [0.041, 0.025, 0.020], out: 1, fan: 0.17, nat: 0.04 },
+  middle: { base: [-0.007, 0.006, -0.088], len: [0.045, 0.028, 0.021], out: 0.25, fan: 0.04, nat: 0.0 },
+  ring: { base: [0.012, 0.004, -0.084], len: [0.042, 0.026, 0.020], out: -1, fan: -0.10, nat: -0.035 },
+  little: { base: [0.028, -0.001, -0.074], len: [0.033, 0.021, 0.018], out: -1, fan: -0.24, nat: -0.09 },
 };
 const FNAMES = ['index', 'middle', 'ring', 'little'];
 // The thumb leaves the palm low on the radial side, angled forward, out and down; its nail turned out.
-const THUMB = { base: [-0.020, -0.011, -0.020], rest: [-0.32, 0.78, 0.85], len: [0.044, 0.032, 0.027], r: [0.0145, 0.0112, 0.0101, 0.0086] };
+const THUMB = { base: [-0.020, -0.011, -0.020], rest: [-0.32, 0.78, 0.85], len: [0.044, 0.032, 0.027] };
 
 const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const lerp = (a, b, t) => a + (b - a) * t;
-// value along a joint chain at distance d, given values at the joints (and the end)
-function along(vals, joints, d) {
-  for (let i = 0; i < joints.length - 1; i++) {
-    if (d <= joints[i + 1]) return lerp(vals[i], vals[i + 1], (d - joints[i]) / (joints[i + 1] - joints[i]));
+
+// The skin is built once, for the right hand at rest, and shared (mirrored) by both arms.
+let SKIN = null;
+const W0 = -UPPER - FORE;
+function restFrames() {
+  // the right hand's joints at rest, in the wrist's frame (millimetres)
+  const M = {};
+  const mm = (v) => v.map((x) => x * 1000);
+  const at = (parent, pos, euler) => {
+    const m = new THREE.Matrix4().compose(new THREE.Vector3(...pos), new THREE.Quaternion().setFromEuler(new THREE.Euler(...euler, 'YXZ')), new THREE.Vector3(1, 1, 1));
+    return parent ? parent.clone().multiply(m) : m;
+  };
+  for (const f of FNAMES) {
+    const F = FINGERS[f];
+    M[f + '1'] = at(null, mm(F.base), [0, F.fan, 0]);
+    M[f + '2'] = at(M[f + '1'], [0, 0, -F.len[0] * 1000], [0, 0, 0]);
+    M[f + '3'] = at(M[f + '2'], [0, 0, -F.len[1] * 1000], [0, 0, 0]);
   }
-  return vals[vals.length - 1];
+  M.thumb1 = at(null, mm(THUMB.base), THUMB.rest);
+  M.thumb2 = at(M.thumb1, [0, 0, -THUMB.len[0] * 1000], [0, 0, 0]);
+  M.thumb3 = at(M.thumb2, [0, 0, -THUMB.len[1] * 1000], [0, 0, 0]);
+  return M;
+}
+export function buildSkinData(boneIndex, h = 1.1) {
+  const t0 = performance.now();
+  const M = restFrames();
+  const frames = {};
+  const skel = {
+    frame: (name) => (frames[name] ||= frameOf(M[name])),
+    len: { thumb: THUMB.len.map((x) => x * 1000) },
+    bone: boneIndex,
+  };
+  for (const f of FNAMES) skel.len[f] = FINGERS[f].len.map((x) => x * 1000);
+  const H = buildHandField(skel);
+  SKIN_STATS.field = Math.round(performance.now() - t0);
+  // the box the skin lies in: the forearm up into the sleeve, out past the finger tips and the thumb
+  const min = [-48, -38, -175], max = [48, 40, 192];
+  for (const name of Object.keys(M)) {
+    const p = new THREE.Vector3().setFromMatrixPosition(M[name]);
+    const tip = new THREE.Vector3(0, 0, -32).applyMatrix4(M[name]);
+    for (const v of [p, tip]) for (let a = 0; a < 3; a++) { min[a] = Math.min(min[a], v.getComponent(a) - 14); max[a] = Math.max(max[a], v.getComponent(a) + 14); }
+  }
+  const mesh = meshField(H.field, { min, max }, h);
+  const { pos, nor, idx } = mesh;
+  const t1 = performance.now();
+  const sk = skinVertices(H, mesh, skel);
+  for (let i = 0; i < pos.length; i += 3) { pos[i] /= 1000; pos[i + 1] /= 1000; pos[i + 2] = pos[i + 2] / 1000 + W0; }
+  const t2 = performance.now();
+  SKIN_STATS.verts = pos.length / 3; SKIN_STATS.tris = idx.length / 3; SKIN_STATS.mesh = Math.round(t1 - t0); SKIN_STATS.skin = Math.round(t2 - t1);
+  return { pos, nor, idx: Uint32Array.from(idx), si: sk.si, sw: sk.sw, tint: sk.tint, tintL: sk.tintL, skin: sk.skin, field: H };
+}
+export const SKIN_STATS = {};
+function frameOf(m) {
+  const e = m.elements;
+  return {
+    o: new THREE.Vector3(e[12], e[13], e[14]), x: new THREE.Vector3(e[0], e[1], e[2]).normalize(),
+    y: new THREE.Vector3(e[4], e[5], e[6]).normalize(), z: new THREE.Vector3(e[8], e[9], e[10]).normalize(),
+    at(x, y, z) { return this.o.clone().addScaledVector(this.x, x).addScaledVector(this.y, y).addScaledVector(this.z, z); },
+  };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -112,12 +170,6 @@ function section(c, X, Y, rx, ry, n, e = 2.2, shape = null) {
   return pts;
 }
 
-// ---------------------------------------------------------------------------------------------------
-// Skin colour: warm flesh, cooler between the joints, pooling warmer and darker at the knuckles, paler
-// palm and nails. tint = [r, g, b, stain]
-const KNUCKLE = [0.9, 0.8, 0.8], COOL = [0.97, 0.98, 1.03], PALM = [1.05, 1.0, 0.95], NAIL = [1.1, 1.04, 1.02];
-function mixT(a, b, t) { return [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)]; }
-
 export class Arm {
   constructor(side, mats) {
     this.side = side;            // 1 right, -1 left
@@ -144,7 +196,7 @@ export class Arm {
     mk('wrist', B.twist, [0, 0, -FORE / 2]);
     for (const f of FNAMES) {
       const F = FINGERS[f];
-      mk(f + '1', B.wrist, F.base);
+      mk(f + '1', B.wrist, F.base, [0, F.fan, 0]);
       mk(f + '2', B[f + '1'], [0, 0, -F.len[0]]);
       mk(f + '3', B[f + '2'], [0, 0, -F.len[1]]);
     }
@@ -176,132 +228,26 @@ export class Arm {
   // rest-pose world transform of a bone (arm space) — used to place lofted rings
   restMatrix(name) { this.B[name].updateMatrixWorld(true); return this.B[name].matrixWorld.clone(); }
 
+  // The skin: one surface for forearm, hand, fingers and thumb (handmesh.js), meshed once for the right
+  // hand and mirrored for the left.
   buildSkin() {
-    const L = new Loft();
-    const side = this.side, right = side > 0;
-    const V = (x, y, z) => new THREE.Vector3(x, y, z);
-    const N = 14;
-
-    // ---- forearm and palm, one surface: elbow → wrist (flattening, the ulnar head showing) → knuckles ----
-    const iE = this.i('elbow'), iT = this.i('twist'), iW = this.i('wrist'), iS = this.i('shoulder');
-    const W0 = -UPPER - FORE;
-    const knX = FNAMES.map((f) => FINGERS[f].base[0]);
-    const knZ = FNAMES.map((f) => FINGERS[f].base[2] + 0.009);
-    const zEnd = (x) => {
-      if (x <= knX[0]) return knZ[0] + (x - knX[0]) * 0.2;
-      for (let i = 0; i < 3; i++) if (x <= knX[i + 1]) return lerp(knZ[i], knZ[i + 1], (x - knX[i]) / (knX[i + 1] - knX[i]));
-      return knZ[3] + (x - knX[3]) * 0.9;
-    };
-    {
-      const NA = 20;
-      const rings = [];
-      const tintAt = (k, kn) => { const a = k / NA * Math.PI * 2, dorsal = Math.sin(a); return [...mixT(mixT(PALM, COOL, Math.max(0, dorsal) * 0.8 + 0.2), KNUCKLE, kn * Math.max(0, dorsal) * 0.9), 0]; };
-      // forearm
-      for (let z = 0.04; z > -FORE + 0.004; z -= 0.01) {
-        const u = Math.min(1, Math.max(0, -z / FORE));
-        const bulge = Math.exp(-Math.pow((u - 0.22) / 0.25, 2));
-        const rx = lerp(0.039, 0.0292, sstep(0.1, 1, u)) + bulge * 0.004;
-        const ry = lerp(0.035, 0.0178, sstep(0.05, 1, u)) + bulge * 0.004;
-        const pts = section(V(0, -0.002 * u, -UPPER + z), V(1, 0, 0), V(0, 1, 0), rx, ry, NA, 2.1 + u * 0.9, (x, y) => {
-          // the head of the ulna, on the little-finger side of the back of the wrist
-          const b = Math.exp(-Math.pow((u - 0.93) / 0.05, 2)) * 0.0028;
-          if (x > 0.01 && y > 0) { x += b * 0.6; y += b; }
-          return [x, y];
-        });
-        const w = [[iE, Math.max(0, 1 - u * 1.05)], [iT, u < 0.5 ? u * 1.8 : 1 - sstep(0.8, 1, u) * 0.5], [iW, sstep(0.86, 1.0, u) * 0.5], [iS, sstep(0.0, 0.04, z) * 0.5]];
-        rings.push({ pts, w, tint: (k) => tintAt(k, 0) });
-      }
-      // palm: a flattened box out to the slanted knuckle line, fuller at the thenar and hypothenar
-      const NS = 10;
-      for (let j = 0; j <= NS; j++) {
-        const v = j / NS;
-        const rx = lerp(0.0292, 0.0425, sstep(0, 0.75, v));
-        const ry = lerp(0.0178, 0.0135, v);
-        const pts = section(V(0.001 * v, -0.002 + v * 0.004, 0), V(1, 0, 0), V(0, 1, 0), rx, ry, NA, lerp(3.0, 3.3, v), (x, y) => {
-          if (y < 0) {
-            y -= 0.0055 * Math.exp(-Math.pow((x + 0.018) / 0.012, 2)) * Math.sin(Math.PI * Math.min(1, v * 1.3));
-            y -= 0.0025 * Math.exp(-Math.pow((x - 0.025) / 0.01, 2)) * Math.sin(Math.PI * v);
-          } else y += 0.002 * (1 - Math.pow(x / 0.045, 2)) * v;
-          return [x, y];
-        });
-        for (const p of pts) p.z = W0 + lerp(0.0, zEnd(p.x), v);
-        const fingerW = (p) => {
-          // the knuckle end of the palm moves a little with the nearest finger
-          let best = 0, bd = 1;
-          for (let i = 0; i < 4; i++) { const d = Math.abs(p.x - knX[i]); if (d < bd) { bd = d; best = i; } }
-          return [[iW, 1], [this.i(FNAMES[best] + '1'), sstep(0.7, 1, v) * 0.35], [iT, (1 - sstep(0, 0.2, v)) * 0.6]];
-        };
-        rings.push({ pts, w: (k) => fingerW(pts[k]), tint: (k) => tintAt(k, sstep(0.75, 1, v)) });
-      }
-      L.tube(rings, { capEnd: true });
+    if (!SKIN) SKIN = buildSkinData((name) => this.i(name));
+    const g = new THREE.BufferGeometry();
+    const pos = SKIN.pos.slice(), nor = SKIN.nor.slice(), idx = SKIN.idx.slice();
+    if (this.mirror) {
+      for (let i = 0; i < pos.length; i += 3) { pos[i] = -pos[i]; nor[i] = -nor[i]; }
+      for (let i = 0; i < idx.length; i += 3) { const t = idx[i + 1]; idx[i + 1] = idx[i + 2]; idx[i + 2] = t; }
     }
-    // ---- fingers and thumb: tubes along each chain, rounded at the tip ----
-    const chain = (prefix, base, len, r, mtx, { thumb = false, smudge = false, stainAmt = 0 } = {}) => {
-      const joints = [0, len[0], len[0] + len[1], len[0] + len[1] + len[2]];
-      const total = joints[3];
-      const i1 = this.i(prefix + '1'), i2 = this.i(prefix + '2'), i3 = this.i(prefix + '3');
-      const rings = [];
-      const start = thumb ? -0.016 : -0.011;
-      const stations = [];
-      for (let d = start; d < total - 0.009; d += 0.0035) stations.push(d);
-      // rounded tip
-      for (let k = 0; k <= 5; k++) stations.push(total - 0.009 + (k / 5) * 0.009);
-      const NF = 12;
-      for (const d of stations) {
-        let rr = along([r[0] * (thumb ? 1.05 : 1), r[0], r[1], r[2], r[3]], [start, 0, joints[1], joints[2], total - 0.006], d);
-        const tipT = (d - (total - 0.009)) / 0.009;
-        if (tipT > 0) rr *= Math.sqrt(Math.max(0, 1 - tipT * tipT)) * 0.98 + 0.0001;
-        // the back of each joint stands proud; the pads between are fuller on the palm side
-        let knuckle = 0;
-        for (let j = 0; j < 3; j++) knuckle += Math.exp(-Math.pow((d - joints[j]) / 0.0045, 2)) * (j === 0 ? 0.0018 : 0.0011);
-        const seg = d < joints[1] ? 0 : d < joints[2] ? 1 : 2;
-        const segT = seg === 0 ? d / len[0] : seg === 1 ? (d - joints[1]) / len[1] : (d - joints[2]) / len[2];
-        const pad = Math.sin(Math.PI * Math.min(1, Math.max(0, segT))) * 0.0009;
-        const c = new THREE.Vector3(0, 0, -d).applyMatrix4(mtx);
-        const X = new THREE.Vector3(1, 0, 0).transformDirection(mtx), Y = new THREE.Vector3(0, 1, 0).transformDirection(mtx);
-        const pts = section(c, X, Y, rr * 1.07, rr * 0.93, NF, 2.3, (x, y) => [x, y > 0 ? y + knuckle * (y / (rr * 0.93)) : y - pad * (-y / (rr * 0.93))]);
-        // weights: each phalanx to its bone, blended across the joints; the root into the palm
-        const b1 = sstep(joints[1] - 0.004, joints[1] + 0.004, d), b2 = sstep(joints[2] - 0.004, joints[2] + 0.004, d);
-        const root = 1 - sstep(start, 0.003, d);
-        const w = [[i1, (1 - b1) * (1 - root * 0.6)], [i2, b1 * (1 - b2)], [i3, b2], [iW, root * 0.6]];
-        const tintFn = (k) => {
-          const a = k / NF * Math.PI * 2, sa = Math.sin(a), ca = Math.cos(a);
-          let t = mixT(sa < 0 ? PALM : COOL, COOL, 0.4);
-          // pooling at the knuckles, on the back
-          let kn = 0;
-          for (let j = 0; j < 3; j++) kn += Math.exp(-Math.pow((d - joints[j]) / 0.006, 2));
-          t = mixT(t, KNUCKLE, Math.min(1, kn) * (0.35 + 0.65 * Math.max(0, sa)));
-          // the nail
-          if (seg === 2 && sa > 0.45 && d > total - 0.013 && d < total - 0.0015) t = mixT(t, NAIL, 0.85);
-          let stain = 0;
-          // graphite rubbed into the side of the little finger, where it drags across the page
-          if (smudge) t = mixT(t, [0.72, 0.73, 0.78], Math.max(0, ca) * Math.max(0, -sa + 0.4) * sstep(-0.005, 0.02, d) * 0.75);
-          // ink: pads of the writing fingers and the side the pen rests on
-          if (stainAmt > 0) stain = stainAmt * sstep(total * 0.55, total, d) * (0.4 + 0.6 * Math.max(0, -sa) + (thumb ? 0.3 : Math.max(0, -ca) * 0.4));
-          return [...t, stain];
-        };
-        rings.push({ pts, w, tint: tintFn });
-      }
-      const last = rings[rings.length - 1];
-      const tipPt = new THREE.Vector3(0, -0.0006, -total - 0.0002).applyMatrix4(mtx);
-      L.tube(rings, { capEnd: true, endPoint: tipPt });
-    };
-    // fingers are built in their knuckle frames (rest: aligned with the arm)
-    const wristM = new THREE.Matrix4().makeTranslation(0, 0, W0);
-    for (const f of FNAMES) {
-      const F = FINGERS[f];
-      const m = wristM.clone().multiply(new THREE.Matrix4().makeTranslation(...F.base));
-      chain(f, F.base, F.len, F.r, m, {
-        smudge: right && f === 'little',
-        stainAmt: right ? (f === 'index' ? 1 : f === 'middle' ? 0.8 : 0) : (f === 'index' ? 0.25 : 0),
-      });
-    }
-    // the thumb in its own frame, turned out from the palm
-    const tq = new THREE.Quaternion().setFromEuler(new THREE.Euler(THUMB.rest[0], THUMB.rest[1], THUMB.rest[2], 'YXZ'));
-    const tm = wristM.clone().multiply(new THREE.Matrix4().compose(new THREE.Vector3(...THUMB.base), tq, new THREE.Vector3(1, 1, 1)));
-    chain('thumb', THUMB.base, THUMB.len, THUMB.r, tm, { thumb: true, stainAmt: right ? 0.9 : 0 });
-
-    return L.geometry(this.mirror);
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+    g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(pos.length / 3 * 2), 2));
+    g.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(SKIN.si, 4));
+    g.setAttribute('skinWeight', new THREE.Float32BufferAttribute(SKIN.sw, 4));
+    g.setAttribute('tint', new THREE.Float32BufferAttribute(this.mirror ? SKIN.tintL : SKIN.tint, 4));
+    g.setAttribute('skin', new THREE.Float32BufferAttribute(SKIN.skin, 4));
+    g.setIndex(new THREE.BufferAttribute(idx, 1));
+    g.computeBoundingSphere();
+    return g;
   }
 
   // the sleeve of a wool jumper pushed up the forearm: bunched in soft folds, a rolled edge
@@ -460,6 +406,11 @@ export const POSES = {
     R: hand(GRIP, { frame: 'rail', pos: [0.0, 0.02, 0.0], rot: [0.1, 0.0, -0.2], fingers: { index: [0, 0.9, 1.0, 0.55], middle: [0, 1.0, 1.1, 0.6] } }),
     L: hand(RELAX, { frame: 'body', pos: [-0.24, -0.7, -0.1], rot: [0.9, 0.0, 1.35] }),
   },
+  // debug only (the hands review's studio): held up before the face, fingers at ease
+  show: {
+    R: hand(RELAX, { frame: 'body', pos: [0.1, -0.12, -0.36], rot: [0.5, 0.25, 0.1] }),
+    L: hand(RELAX, { frame: 'body', pos: [-0.24, -0.7, -0.14], rot: [0.9, 0.0, 1.35] }),
+  },
 };
 export const POSE_NAMES = Object.keys(POSES);
 
@@ -468,7 +419,7 @@ export const POSE_NAMES = Object.keys(POSES);
 export class Hands {
   constructor() {
     this.mats = {
-      flesh: wash({ color: '#D9A88A', color2: '#C99683', tint: true, line: 1, crease: 0.22, gran: 0.35, turb: 0.6, noiseScale: 45, stain: 0.2 }),
+      flesh: wash({ color: '#D6A48A', color2: '#C48F80', tint: true, skin: true, band: 0.38, bare: 0.45, line: 1, crease: 0.22, gran: 0.35, turb: 0.6, noiseScale: 45, stain: 0.2 }),
       wool: wash({ color: '#3C4A62', color2: '#323E55', map: knitTex(), mapAmt: 0.9, line: 1, crease: 0.55, gran: 1.0, turb: 0.9, noiseScale: 40 }),
       pencil: wash({ color: '#3F5E3B', color2: '#36523A', line: 1, crease: 0.4, gran: 0.4, noiseScale: 60 }),
       wood: wash({ color: '#D9BC8E', line: 1, crease: 0.3, gran: 0.6, noiseScale: 80 }),
@@ -578,7 +529,7 @@ export class Hands {
         sp.pos.addScaledVector(sp.vel, Math.min(dt, 0.033));
       }
       this.solve(arm, shoulders[s], sp.pos, t.quat, poles[s]);
-      this.fingers(arm, t, s);
+      this.fingers(arm, t);
       for (const [name, obj] of Object.entries(arm.held)) obj.visible = t.hold === name && this.visible;
     }
     this.R.root.visible = this.L.root.visible = this.visible;
@@ -625,13 +576,11 @@ export class Hands {
     B.wrist.quaternion.copy(twistW.invert().multiply(wq));
   }
 
-  fingers(arm, t, s) {
+  fingers(arm, t) {
     const B = arm.B, side = arm.side;
-    const tr = (this.drift * 0.08 + 0.004);
     for (const f of FNAMES) {
-      const v = t.fingers[f];
-      const jit = Math.sin(this.t * (19 + f.length * 3) + (s === 'R' ? 0 : 1)) * tr;
-      B[f + '1'].rotation.set(-(v[1] + jit), v[0] * FINGERS[f].out * side, 0);
+      const v = t.fingers[f], F = FINGERS[f];
+      B[f + '1'].rotation.set(-v[1], (F.nat + v[0] * F.out) * side, 0);
       B[f + '2'].rotation.set(-v[2], 0, 0);
       B[f + '3'].rotation.set(-v[3], 0, 0);
     }
