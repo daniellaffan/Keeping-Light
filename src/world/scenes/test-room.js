@@ -1,5 +1,5 @@
 // Debug: a plain room with a window over the sea, for checking the 3D → watercolor pipeline.
-// ?debug=1&view=fp&test=room   the camera drifts round the table; drag to look, WASD to move.
+// ?debug=1&test=room   the camera drifts round the table; drag to look, WASD to move.
 import * as THREE from 'three';
 import { wash } from '../materials.js';
 import { woodTex, plasterTex, stoneTex } from '../textures.js';

@@ -23,7 +23,7 @@ function mats() {
 }
 
 // a block with a pitched roof, its door side toward `face` (a world point), standing on the ground
-export function greybox(scene, { at, w = 6, d = 5, h = 3, face = null, yaw = 0, roof = true, solid = true }) {
+export function greybox(scene, { at, w = 6, d = 5, h = 3, face = null, yaw = 0, roof = true, door = roof, solid = true }) {
   const m = mats();
   const p = scene.at(at[0], at[1]);
   if (face) yaw = Math.atan2(face.x - p.x, face.z - p.z);
@@ -32,7 +32,7 @@ export function greybox(scene, { at, w = 6, d = 5, h = 3, face = null, yaw = 0, 
   b.box(m.grey, w, h + 1, d, [0, (h - 1) / 2, 0]);
   if (roof) b.add(new THREE.CylinderGeometry(1, 1, 1, 3), m.roof, { pos: [0, h + 0.55, 0], rot: [-Math.PI / 2, Math.PI / 2, 0], scale: [(d / 2 + 0.3) / 0.866, w + 0.4, 1.1] });
   // a dark doorway on the face
-  b.box(m.roof, 1.0, 2.0, 0.06, [w * 0.18, 1.0, d / 2 + 0.02]);
+  if (door) b.box(m.roof, 1.0, 2.0, 0.06, [w * 0.18, 1.0, d / 2 + 0.02]);
   const g = b.finish('greybox');
   g.position.copy(p);
   g.rotation.y = yaw;

@@ -113,7 +113,7 @@ function terrain() {
     c.lerp(c2, smooth(0.86, 0.62, ny_));
     c.lerp(shingle, smooth(2.6, 1.2, h) * smooth(-1.6, -0.6, h) * 0.9);
     // the lane, worn into the grass
-    if (h > 1) c.lerp(lane, smooth(1.1, 0.35, laneDist(x, y)) * 0.75);
+    if (h > 1) c.lerp(lane, smooth(0.8, 0.25, laneDist(x, y)) * 0.7);
     c.lerp(bed, smooth(-1.2, -2.4, h));
     tint[k * 4] = c.r; tint[k * 4 + 1] = c.g; tint[k * 4 + 2] = c.b; tint[k * 4 + 3] = 0;
   }
@@ -516,9 +516,10 @@ export class Bay {
     this.group.add(v);
   }
 
-  setLights(night) {
+  // which windows are lit tonight (by day, none: lit is false)
+  setLights(night, lit_ = true) {
     const total = this.windows.length;
-    const lit = night.lightsCount ? night.lights : Math.round((night.lights ?? 1) * total);
+    const lit = !lit_ ? 0 : night.lightsCount ? night.lights : Math.round((night.lights ?? 1) * total);
     const on = new Set(this.windowOrder.slice(0, lit));
     this.windows.forEach((w, i) => { if (w) w.glow.visible = w.halo.visible = w.refl.visible = on.has(i); });
   }

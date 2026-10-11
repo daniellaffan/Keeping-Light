@@ -1,4 +1,4 @@
-# The Keeping Light — Design notes (V1)
+# The Keeping Light — Design notes
 
 Practical notes on how the game is put together. The story, tone and mechanics come
 from the build brief; this file records structure and the decisions made while building.
@@ -34,9 +34,28 @@ src/ui/input.js            pointer/touch/keyboard, immediate-mode hit regions
 src/ui/settings.js         sound control (HTML speaker button, volume, mute)
 src/ui/debug.js            ?debug=1 panel, keys and jumps
 src/data/*.js              all writing: logbook entries, village scenes, ship names, records
+src/world/world.js         first person: the three.js scene, camera and sky, rendered by the pipeline
+src/world/pipeline.js      three.js → the four watercolor layers in one MRT pass, depth ink, HUD overlay
+src/world/materials.js     the one wash shader (MRT), glows, the beam, the sky; shared light uniforms
+src/world/textures.js      painted textures made in code (wood, plaster, wool, lettering)
+src/world/build.js         merges static pieces per material, with a hand-made wobble
+src/world/geo.js           chart ↔ world (4 m to a chart unit), the tower, the room's facing
+src/world/keeper.js        the first-person game: phases, camera, states, prompts, HUD, autoplay
+src/world/room.js          the watch room, its door, stairs and sill, and the tower top seen from outside
+src/world/book.js          the logbook on the table: LogbookScene's layers as page textures, raycast input
+src/world/hands.js         the forearms and hands: skinned lofts, poses, two-bone IK, tremor
+src/world/walker.js        walking: keys and mouse look, touch stick, the pace, autoplay steering
+src/world/bay.js           the bay from the chart: land, sea, reefs, village, piers, ships, beam, beats
+src/world/night.js         the night from the chair: Fleet, the time-lapse and its slowdowns
+src/world/lane.js          the lane round the bay, its spurs, and routes along it
+src/world/headland.js      by day: walking out of doors, the places, triggers, the afternoon clock
+src/world/places/*.js      one placeholder per place (shed, cliff, village, harbour, cottages, school)
+src/world/review.js        debug: contact sheets of the hand poses
+src/vendor/three/          three.js (pinned) and the one addon used, loaded through the import map
 tools/check-nights.mjs     node script: validates every night is solvable, autoplan works
 tools/serve.py             no-cache static server for development
 docs/screenshots/          one screenshot of every distinct scene
+docs/HANDOFF.md            where the first-person build stands and how it fits together
 ```
 
 ## Rendering architecture
@@ -68,6 +87,68 @@ Layers are only re-uploaded when a scene marks them dirty.
 portrait). The view transform fits the safe area to the screen and scenes fill whatever extra
 viewport there is (`L.view` gives the visible logical rect), so nothing letterboxes; the painting
 ends in a ragged deckle edge like a sketchbook page.
+
+## First person
+
+The game is played in first person by default; `?view=classic` is the 2D game, untouched, and the
+game falls back to it if the 3D world can't be built.
+
+**Rendering.** three.js shares the game's WebGL2 context. It renders the world in one pass into
+four render targets: the same four layers as the 2D game (paint, ink, light, mask). Every surface is a
+flat wash, with pigment turbulence and granulation computed in object or world space, so they stay on
+the surfaces as the view turns. A compose pass turns depth into ink lines (silhouettes heavier than
+creases, wobbled and broken), pools a little pigment at depth edges, and lays the 2D canvases on top
+as a HUD (prompts, the reading panel, rain on the glass). Its outputs go straight into
+`Watercolor.render` as GPU textures, so the paper, bleed, granulation, haar, act grading, bloom
+transitions and deckle margin are the same code as before.
+
+**One keeper, the same phase machine.** `main.js` still decides what happens when. The keeper
+registers thin wrappers under the old scene names (logbook, bay, daymap, vignette, finale), so
+`main.js`, the debug panel, saving and autoplay work as they always have. Moving between keeper
+phases is seamless, with no crossfade, unless time has jumped (afternoon to dusk, night to dawn,
+dawn to the next afternoon). Then the bloom transition plays over the first-person view.
+
+**A day.**
+* The keeper starts in the watch room at two, opens the door (the hand takes the ring) and walks
+  the lane to one place.
+* The places are greyboxes at their real chart positions (`headland-map.js` sites). The village is
+  already visible across the bay from the window, so it can't be anywhere else.
+* The lane is long (about 600 m to the village, 750 m to the cottages). So, as at night, the
+  afternoon runs on when nothing is near: up to ×5 pace, the clock at √pace.
+* Walking into a place's trigger reads its vignette over a paper panel. Then the light fails over
+  a few seconds and the bloom brings you to the table at dusk.
+
+**Dusk, night and dawn.**
+* At dusk you lean over the logbook. `LogbookScene` draws into its own layers, which become the
+  page textures; the pointer is raycast onto the page and handed to the logbook's own input.
+* The hand pulls the lamp lever and the keeper sits in the chair at the window.
+* `Fleet` sails the inked line through a time-lapse night that slows for every hazard, arrival and
+  beat.
+* At dawn the keeper gets up and leans over the dawn page.
+
+**The finale.** The keeper climbs the stairs in first person, then the 2D last sunset and end card
+take over through a bloom.
+
+## Decisions made for first person
+
+* **Hands only.** No body, no shadow; two skinned forearms with eleven authored poses, two-bone IK,
+  and a tremor that grows with the handwriting's drift (REPORT, milestone 3).
+* **The bay is built from the chart** at 4 m to a unit, so the line in the book is the line from the
+  window.
+* **The window faces the middle of the bay** (chart 50, 30), so the reefs fall inside it.
+* **The day's places are placeholders** at their real positions, each in its own file with the same
+  interface, to be replaced one at a time. Triggers sit just off the lane (in front of each door),
+  so you don't visit by passing.
+* **The afternoon clock runs at √pace.** Tied to the stride, the far places couldn't be reached
+  before dusk.
+* **The climb is eight treads.** The watch room is a single storey with the lantern on its roof. The
+  hatch opens over the upper half of the flight, and the bloom to the last sunset starts as you look
+  up through it into the lamp room's light.
+* **The tower from outside is the watch room and the lantern**, about 7 m. A taller tower would
+  move the lamp and the beam the night is built around. It's left for a later pass.
+* **Sound has a space.** Footsteps and the door go through a stone-room reverb indoors and an
+  almost dry open-air one outdoors, crossfaded at the door. Indoors there is a low room tone, and
+  by day the walls muffle the sea.
 
 ## The bay and the chart share one world
 

@@ -3,7 +3,7 @@
 import { Music } from './music.js';
 import { Ambience } from './ambience.js';
 import { Sfx } from './sfx.js';
-import { impulse } from './voices.js';
+import { impulse, openAirImpulse } from './voices.js';
 
 const INDOOR = new Set(['shop', 'pub', 'school', 'cottages', 'shed', 'lamp']);
 
@@ -30,9 +30,20 @@ class AudioEngine {
     const wet = ctx.createGain(); wet.gain.value = 0.45;
     this.reverb.connect(wet); wet.connect(this.master);
 
+    // the space you're standing in, for footsteps and the door: a stone room, or the open air,
+    // crossfaded as you go through the door (first person only; the 2D game never moves)
+    this.spaceSend = ctx.createGain();
+    this.spaceIn = ctx.createGain(); this.spaceIn.gain.value = 0;
+    this.spaceOut = ctx.createGain(); this.spaceOut.gain.value = 0.5;
+    const roomIr = ctx.createConvolver(); roomIr.buffer = impulse(ctx, 1.3, 3.4);
+    const openIr = ctx.createConvolver(); openIr.buffer = openAirImpulse(ctx);
+    this.spaceSend.connect(roomIr); roomIr.connect(this.spaceIn); this.spaceIn.connect(this.master);
+    this.spaceSend.connect(openIr); openIr.connect(this.spaceOut); this.spaceOut.connect(this.master);
+    this.space = null;
+
     this.music = new Music(ctx, this.master, this.reverb);
     this.amb = new Ambience(ctx, this.master);
-    this.sfx = new Sfx(ctx, this.master, this.reverb);
+    this.sfx = new Sfx(ctx, this.master, this.reverb, this.spaceSend);
     this.started = false;
     this.hidden = false;
   }
@@ -45,6 +56,9 @@ class AudioEngine {
     this.amb.start();
     const g = this.game;
     this.setScene(g.sceneName, g.night, g.scene ? { mode: g.scene.mode, part: g.scene.part } : {});
+    // first person may have moved indoors before the first gesture woke the sound
+    const k = g.keeper;
+    if (k && g.scene?.keeper === k) this.setSpace(k.inside === false ? 'out' : 'in', k.mode === 'day');
   }
 
   applyVolume(slow = false) {
@@ -81,6 +95,18 @@ class AudioEngine {
     });
   }
 
+  // first person: 'in' (the watch room: its tone and reverb; walls muffle the sea if you came in from
+  // the headland) or 'out' (the open air)
+  setSpace(space, walls = false) {
+    this.space = space;
+    this.walls = walls;
+    if (!this.started) return;
+    const t = this.ctx.currentTime, inside = space === 'in';
+    this.spaceIn.gain.setTargetAtTime(inside ? 0.55 : 0, t, 0.25);
+    this.spaceOut.gain.setTargetAtTime(inside ? 0 : 0.5, t, 0.25);
+    this.amb.setRoom(inside ? 0.05 : 0, inside && walls);
+  }
+
   tick() {
     if (!this.started || this.hidden) return;
     this.music.tick();
@@ -104,4 +130,6 @@ class AudioEngine {
   shimmer() { if (this.started) this.sfx.shimmer(); }
   stairStep(i) { if (this.started) this.sfx.stairStep(i); }
   heldNote() { if (this.started) this.sfx.heldNote(); }
+  footstep(surface, v) { if (this.started) this.sfx.footstep(surface, v); }
+  door() { if (this.started) this.sfx.door(); }
 }

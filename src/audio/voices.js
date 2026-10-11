@@ -71,6 +71,27 @@ export function impulse(ctx, secs = 2.6, decay = 2.4) {
   });
 }
 
+// Out of doors: almost dry, a couple of faint slaps back off the tower and the rocks, a short tail.
+export function openAirImpulse(ctx) {
+  return cached(ctx, 'ir-open', () => {
+    const n = Math.floor(ctx.sampleRate * 0.9);
+    const b = ctx.createBuffer(2, n, ctx.sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+      const d = b.getChannelData(ch);
+      let lp = 0;
+      for (let i = 0; i < n; i++) {
+        lp = lp * 0.85 + (Math.random() * 2 - 1) * 0.15;
+        d[i] = lp * Math.pow(1 - i / n, 7) * 0.5;
+      }
+      for (const [at, a] of [[0.07 + ch * 0.013, 0.5], [0.19 + ch * 0.021, 0.25], [0.33, 0.1]]) {
+        const k = Math.floor(at * ctx.sampleRate);
+        for (let i = 0; i < 90; i++) d[k + i] += (Math.random() * 2 - 1) * a * (1 - i / 90);
+      }
+    }
+    return b;
+  });
+}
+
 export function noiseSource(ctx, buffer, loop = true) {
   const s = ctx.createBufferSource();
   s.buffer = buffer; s.loop = loop;
