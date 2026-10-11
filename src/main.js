@@ -321,6 +321,10 @@ async function boot() {
     game.world.resize(layers);
     const { TestRoomScene } = await import('./world/scenes/test-room.js');
     game.scenes.testroom = new TestRoomScene(game);
+    // the phases built in first person so far take over their scene names
+    const { Keeper } = await import('./world/keeper.js');
+    game.keeper = new Keeper(game);
+    Object.assign(game.scenes, game.keeper.wrappers);
   }
   const loading = document.getElementById('loading');
   loading.style.opacity = '0';

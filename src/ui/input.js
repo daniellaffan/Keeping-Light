@@ -16,6 +16,7 @@ export class Input {
     this.lastActivity = performance.now();
     this.captured = null;  // button id that got pointerdown
 
+    if (!canvas) return;   // virtual: events are fed in by its owner (the logbook on the 3D table)
     const pos = (e) => {
       const r = canvas.getBoundingClientRect();
       this.cssX = e.clientX - r.left; this.cssY = e.clientY - r.top;
@@ -25,39 +26,48 @@ export class Input {
       e.preventDefault();
       canvas.focus({ preventScroll: true });
       try { canvas.setPointerCapture(e.pointerId); } catch { /* ignore */ }
-      this.type = e.pointerType || 'mouse';
-      pos(e); this.down = true; this.lastActivity = performance.now();
-      const b = this.hit(this.x, this.y);
-      this.captured = b ? b.id : null;
-      if (b && b.onDown) b.onDown(this.x, this.y);
-      if (!b || b.passThrough) for (const h of this.handlers.down) h(this.x, this.y, e);
-    });
-    canvas.addEventListener('pointermove', (e) => {
-      this.type = e.pointerType || 'mouse';
-      pos(e); this.lastActivity = performance.now();
-      for (const h of this.handlers.move) h(this.x, this.y, e);
-    });
-    const up = (e) => {
       pos(e);
-      const wasDown = this.down;
-      this.down = false;
-      const b = this.hit(this.x, this.y);
-      if (wasDown && b && b.id === this.captured && b.onClick && !b.disabled) b.onClick(this.x, this.y);
-      this.captured = null;
-      for (const h of this.handlers.up) h(this.x, this.y, e);
-      if (e.pointerType !== 'mouse') { this.x = -9999; this.y = -9999; }
-    };
-    canvas.addEventListener('pointerup', up);
-    canvas.addEventListener('pointercancel', (e) => { this.down = false; this.captured = null; for (const h of this.handlers.up) h(this.x, this.y, e); });
+      this.pointerDown(this.x, this.y, e);
+    });
+    canvas.addEventListener('pointermove', (e) => { pos(e); this.pointerMove(this.x, this.y, e); });
+    canvas.addEventListener('pointerup', (e) => { pos(e); this.pointerUp(this.x, this.y, e); });
+    canvas.addEventListener('pointercancel', (e) => this.pointerCancel(e));
     canvas.addEventListener('pointerleave', () => { if (!this.down) { this.x = -9999; this.y = -9999; } });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
-    window.addEventListener('keydown', (e) => {
-      this.lastActivity = performance.now();
-      if (e.repeat && !['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
-      this.keys.add(e.key);
-      for (const h of this.handlers.key) if (h(e) === true) { e.preventDefault(); break; }
-    });
+    window.addEventListener('keydown', (e) => this.keyDown(e));
     window.addEventListener('keyup', (e) => this.keys.delete(e.key));
+  }
+
+  // ---- events, in logical coordinates (called by the DOM listeners, or by hand for a virtual input) ----
+  pointerDown(x, y, e) {
+    this.type = e.pointerType || 'mouse';
+    this.x = x; this.y = y; this.down = true; this.lastActivity = performance.now();
+    const b = this.hit(x, y);
+    this.captured = b ? b.id : null;
+    if (b && b.onDown) b.onDown(x, y);
+    if (!b || b.passThrough) for (const h of this.handlers.down) h(x, y, e);
+  }
+  pointerMove(x, y, e) {
+    this.type = e.pointerType || 'mouse';
+    this.x = x; this.y = y; this.lastActivity = performance.now();
+    for (const h of this.handlers.move) h(x, y, e);
+  }
+  pointerUp(x, y, e) {
+    this.x = x; this.y = y;
+    const wasDown = this.down;
+    this.down = false;
+    const b = this.hit(x, y);
+    if (wasDown && b && b.id === this.captured && b.onClick && !b.disabled) b.onClick(x, y);
+    this.captured = null;
+    for (const h of this.handlers.up) h(x, y, e);
+    if (e.pointerType && e.pointerType !== 'mouse') { this.x = -9999; this.y = -9999; }
+  }
+  pointerCancel(e) { this.down = false; this.captured = null; for (const h of this.handlers.up) h(this.x, this.y, e); }
+  keyDown(e) {
+    this.lastActivity = performance.now();
+    if (e.repeat && !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'w', 'a', 's', 'd', 'W', 'A', 'S', 'D'].includes(e.key)) return;
+    this.keys.add(e.key);
+    for (const h of this.handlers.key) if (h(e) === true) { e.preventDefault(); break; }
   }
 
   on(kind, fn) { this.handlers[kind].push(fn); return () => { const a = this.handlers[kind]; const i = a.indexOf(fn); if (i >= 0) a.splice(i, 1); }; }

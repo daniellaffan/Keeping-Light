@@ -295,9 +295,9 @@ export class LogbookScene {
     const cache = L.cache(key, (C) => this.paintStatic(C, P, sp));
     L.blit(cache);
 
-    // warm lamp light at dusk; thin cool light at dawn
+    // warm lamp light at dusk; thin cool light at dawn (on the 3D table, the room's own light does this)
     const cv = P.cover;
-    if (this.mode === 'dusk') {
+    if (this.inWorld) { /* lit by the room */ } else if (this.mode === 'dusk') {
       glow(L.light, cv.x + 60, cv.y + 30, 900, '#E6A94A', 0.16);
     } else {
       glow(L.light, cv.x + cv.w - 80, cv.y + 20, 900, '#C9D6E8', 0.08);
@@ -308,7 +308,7 @@ export class LogbookScene {
 
     this.drawNav(L, P);
     if (this.single) this.drawTabs(L);
-    if (this.flipAnim) this.drawFlip(L, P);
+    if (this.flipAnim && !this.inWorld) this.drawFlip(L, P);   // in 3D a real leaf turns over
   }
 
   paintStatic(C, P, sp) {
