@@ -20,6 +20,9 @@ export class Walker {
     this.drag = null;      // mouse drag-to-look when the pointer isn't locked
     this.moved = 0;        // metres walked (footsteps)
     this.onStep = null;
+    this.speedScale = 1;   // the outdoor pace: far from anything, the afternoon runs on and so do you
+    this.maxSpeed = 14;
+    this.autoTo = null;    // autoplay: a world point { x, z } to walk to
     const canvas = game.canvas, inp = game.input;
 
     document.addEventListener('pointerlockchange', () => { this.locked = document.pointerLockElement === canvas; });
@@ -104,8 +107,16 @@ export class Walker {
         const a = Math.atan2(dy, dx);
         mr = Math.cos(a) * m; mf = -Math.sin(a) * m;
       }
+      // autoplay walks itself: turn toward the next point on the way, and go
+      if (this.autoTo) {
+        const want = Math.atan2(-(this.autoTo.x - this.pos.x), -(this.autoTo.z - this.pos.z));
+        let d = want - this.yaw; d -= Math.round(d / (Math.PI * 2)) * Math.PI * 2;
+        this.yaw += d * Math.min(1, dt * 5);
+        this.pitch += (-0.08 - this.pitch) * Math.min(1, dt * 2);
+        mf = Math.max(0, Math.cos(d)); mr = 0;
+      }
       const run = this.game.input.keys.has('Shift') || (this.stick && Math.hypot(this.stick.x - this.stick.ox, this.stick.y - this.stick.oy) > 70);
-      const sp = run ? this.runSpeed : this.walkSpeed;
+      const sp = Math.min(this.maxSpeed, (run ? this.runSpeed : this.walkSpeed) * this.speedScale);
       const len = Math.hypot(mf, mr);
       if (len > 1) { mf /= len; mr /= len; }
       const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
@@ -123,9 +134,11 @@ export class Walker {
     const moved = Math.hypot(next.x - this.pos.x, next.z - this.pos.z);
     this.pos.copy(next);
     const speed = moved / Math.max(dt, 1e-4);
-    this.bobT += moved * 1.75;
+    // at the time-lapse pace the steps are as many as at a walk: the stride, not the cadence, grows
+    const stride = moved / this.speedScale;
+    this.bobT += stride * 1.75;
     this.bob += ((speed > 0.2 ? 1 : 0) - this.bob) * Math.min(1, dt * 5);
-    this.moved += moved;
+    this.moved += stride;
     if (this.moved > 0.72) { this.moved = 0; this.onStep?.(speed); }
   }
 

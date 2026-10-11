@@ -269,7 +269,8 @@ function step(dt) {
       wc.u.trans = Math.min(1, game.transition.t / game.transition.dur);
       if (wc.u.trans >= 1) game.transition = null;
     }
-    if (three) {
+    // debug: tests that only need the game's logic can skip painting the frame (game.noRender)
+    if (DEBUG && game.noRender) { /* not painted */ } else if (three) {
       wc.u.surface = 1; wc.u.depthFog = 1;
       wc.u.fogOffset = game.world.fogOffset();
       const src = game.world.render(hud, game.time);
