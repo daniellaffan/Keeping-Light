@@ -60,7 +60,9 @@ export const game = {
   go(name, args = {}, opts = {}) {
     const sc = this.scenes[name];
     if (!sc) throw new Error('No scene ' + name);
-    if (opts.transition !== 'none' && this.scene) {
+    // within the first-person world the camera simply carries on, unless time has jumped
+    const seamless = this.scene?.keeper && sc.keeper && sc.seamless?.(args);
+    if (opts.transition !== 'none' && this.scene && !seamless) {
       wc.snapshot();
       this.transition = { t: 0, dur: opts.duration || 1.8 };
       wc.u.trans = 0;

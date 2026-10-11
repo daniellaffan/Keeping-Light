@@ -6,15 +6,24 @@ import { buildRoom, ROOM } from './room.js';
 import { Book } from './book.js';
 import { Walker } from './walker.js';
 import { Hands, POSE_NAMES } from './hands.js';
-import { wash } from './materials.js';
-import { TOWER, ROOM_YAW, CLIFF_TOP, skyFromPalette } from './geo.js';
+import { TOWER, ROOM_YAW, UNIT } from './geo.js';
+import { Bay, landHeight } from './bay.js';
+import { NightWatch } from './night.js';
 import { palette } from '../render/scenes/bay-paint.js';
+import { fogColorFor } from '../render/scenes/bay.js';
 import { letter, measure } from '../render/hand.js';
-import { blob, rgba, smooth, clamp } from '../render/paint.js';
+import { blob, rgba, smooth, clamp, lerp, inkLine, rng } from '../render/paint.js';
 
 const DEG = Math.PI / 180;
 const ease = (t) => t * t * t * (t * (t * 6 - 15) + 10);
 const wrapA = (a) => a - Math.round(a / (Math.PI * 2)) * Math.PI * 2;
+const DUSK_SUN = new THREE.Vector3(-0.8, 0.22, 0.35).normalize();
+const DAWN_SUN = new THREE.Vector3(0.85, 0.1, -0.4).normalize();
+// the celestial pole (north, 55° up): the stars wheel about it through the night
+const POLE = new THREE.Vector3(0, Math.sin(55 * DEG), -Math.cos(55 * DEG));
+const TIME_SCALES = [1, 2, 4, 0.5, 0.25];
+
+const hasReef = (n) => (n.anomalies || []).some((a) => a.type === 'newReef');
 
 export class Keeper {
   constructor(game) {
@@ -28,14 +37,16 @@ export class Keeper {
     W.scene.add(rg);
     this.roomInv = new THREE.Matrix4().copy(rg.matrixWorld).invert();
 
-    // until the bay and the headland are built: a sea and a cliff top so the window looks onto something
-    const sea = new THREE.Mesh(new THREE.PlaneGeometry(6000, 6000), wash({ color: '#4E6C90', color2: '#3D5878', water: 1, line: 0.2, gran: 0.6, world: true, noiseScale: 0.02 }));
-    sea.rotation.x = -Math.PI / 2;
-    this.sea = sea;
-    const cliff = new THREE.Mesh(new THREE.CylinderGeometry(40, 46, CLIFF_TOP, 24), wash({ color: '#7C8F55', color2: '#6E8049', line: 0.8, gran: 0.8, world: true, noiseScale: 0.1 }));
-    cliff.position.set(TOWER.x, CLIFF_TOP / 2 - 0.02, TOWER.z);
-    this.cliff = cliff;
-    W.scene.add(sea, cliff);
+    // the bay below the window, from the chart
+    this.bay = new Bay();
+    W.scene.add(this.bay.group);
+    this.bay.setNight(game.night);
+    // nothing comes nearer the eye than the hands, so the depth buffer can spend itself on the distance
+    W.camera.near = 0.06;
+    W.camera.updateProjectionMatrix();
+    this.watch = null;
+    this.ray = new THREE.Raycaster();
+    this.drawNote(true);
 
     // the logbook, open on the table
     this.book = new Book(game);
@@ -73,7 +84,7 @@ export class Keeper {
 
     // wrappers: what main.js and the debug panel see
     this.wrappers = {};
-    for (const name of ['logbook']) this.wrappers[name] = this.wrap(name);
+    for (const name of ['logbook', 'bay']) this.wrappers[name] = this.wrap(name);
   }
 
   wrap(name) {
@@ -91,6 +102,11 @@ export class Keeper {
       get mode() { return k.mode; },
       autoPlan() { if (k.state === 'lean' && k.mode === 'dusk') k.book.scene.autoPlan(); },
       closeBook() { k.book.scene.closeBook(); },
+      // keeper to keeper, the camera simply carries on (no cross-fade) unless time has jumped
+      seamless(args = {}) { return name === 'logbook' ? args.mode === 'dawn' : args.mode === 'night'; },
+      get fleet() { return k.watch?.fleet; },
+      get leaving() { return name === 'bay' ? (k.watch ? k.watch.leaving : k.leaving) : false; },
+      set leaving(v) { if (k.watch) k.watch.leaving = v; else k.leaving = v; },
     };
   }
 
@@ -104,18 +120,57 @@ export class Keeper {
     if (name === 'logbook') {
       this.mode = args.mode || 'dusk';
       this.book.enter(this.mode);
+      this.bookNight = this.night.id;
       this.setLight(this.mode === 'dusk' ? 'dusk' : 'dawn');
       if (this.mode === 'dusk') {
+        this.bay.setNight(this.night);
+        this.dawnShips = null; this.watch = null; this.lampLit = false;
+        this.room.lever.rotation.x = 0.5;
         // the light has failed outside: you're back inside, a few steps from the table
         const p = this.roomPoint(200, 1.2);
         this.walker.place(p.x, TOWER.y, p.z);
         this.faceToward(this.bookCentre(), this.walker);
         this.walker.pitch = -0.25;
         this.setState('walk');
+      } else if (this.state === 'dawn-chair' || this.state === 'chair') {
+        // dawn: up out of the chair and over to the table; the book is open at tonight's page
+        this.setState('rise');
       } else {
-        // dawn: back at the table; the book is already open at tonight's page
         this.applyPose(this.standPose());
         this.setState('lean-in');
+      }
+    }
+    if (name === 'bay') {
+      this.mode = args.mode || 'night';
+      this.bay.setNight(this.night);
+      this.leaving = false;
+      this.sip = null; this.sips = 0;
+      // straight to the night (debug): the book on the table is still open at this evening's page
+      if (this.bookNight !== this.night.id) { this.book.enter('dusk'); this.bookNight = this.night.id; }
+      if (this.state !== 'chair' && this.state !== 'dawn-chair') {
+        // arriving straight at the night (debug, or a saved game): already in the chair, the lamp lit
+        this.applyPose(this.chairPose());
+        this.lampLit = true;
+        this.room.lever.rotation.x = 0.5 - 1.15;
+      }
+      if (this.mode === 'night') {
+        this.watch = new NightWatch(g, this.night, args.waypoints || []);
+        this.bay.setShips(this.watch.fleet.ships);
+        this.watch.setLapse(this.lapse ?? true);
+        this.drawNote(this.watch.lapse);
+        this.room.mug.userData.tea.position.y = 0.08;
+        this.setState('chair');
+      } else {
+        this.watch = null;
+        this.dawnShips = (g.lastResults || []).map((r, i) => ({
+          pos: r.fate === 'home' ? [87.5 + i * 2.2, 8.2 + (i % 2) * 0.8] : (r.at || [50, 30]), dir: [0.3, -1],
+          fade: r.fate === 'gone' ? 0 : 1, lantern: r.fate === 'home' ? 0.15 : 0.3, state: r.fate === 'struck' ? 'struck' : 'moored', size: r.size, wake: false,
+        }));
+        this.bay.setShips((g.lastResults || []).map((r) => ({ name: r.name, size: r.size })));
+        if (hasReef(this.night)) this.bay.raiseReef('newrock', 1);
+        this.setLight('dawn');
+        this.dawnBeam = 0.6;
+        this.setState('dawn-chair');
       }
     }
   }
@@ -123,10 +178,12 @@ export class Keeper {
   setState(s) {
     this.state = s;
     this.st = 0;
-    const walking = s === 'walk';
-    this.walker.setEnabled(walking, { lock: !this.game.autoplay });
+    const walking = s === 'walk', seated = s === 'chair' || s === 'dawn-chair';
+    this.walker.setEnabled(walking || seated, { lock: walking && !this.game.autoplay });
+    if (seated) { this.walker.yaw = this.cam.yaw; this.walker.pitch = this.cam.pitch; }
     this.book.open = s === 'lean';
     if (s === 'lean-in') this.blendTo(this.leanPose(), 1.25, () => this.setState('lean'));
+    if (s === 'rise') this.blendTo(() => this.standPose(), 1.9, () => this.setState('lean-in'), { dip: -0.06 });
     if (s === 'lean-out') this.blendTo(this.standPose(), 0.9, () => {
       const p = this.standPose();
       this.walker.place(p.pos.x, TOWER.y, p.pos.z, p.yaw, p.pitch);
@@ -136,40 +193,75 @@ export class Keeper {
   }
 
   // ---------------- lighting by time of day ----------------
-  setLight(tod, haar = this.night.haar || 0) {
-    const S = this.world.shared;
-    const P = palette(tod === 'night' ? 'night' : tod === 'dawn' ? 'dawn' : tod === 'day' ? 'afternoon' : 'dusk', this.night.act >= 3 ? 0.4 : 0);
-    const sunDir = new THREE.Vector3(-0.8, 0.22, 0.35).normalize();
-    skyFromPalette(this.world.sky, P, { stars: tod === 'night' ? 1 : 0, sun: sunDir.clone().multiplyScalar(1) });
-    S.uSunDir.value.copy(sunDir);
-    const lamp = new THREE.Vector3();
-    this.room.flame.getWorldPosition(lamp);
-    S.uLampPos.value.copy(lamp);
-    if (tod === 'dusk') {
-      S.uSunAmt.value = 0.55; S.uAmbient.value = 0.3; S.uLampAmt.value = 1.1; S.uLampFall.value = 0.9; S.uRimAmt.value = 1;
-      S.uLightTint.value.setRGB(1.0, 0.94, 0.86); S.uShadeTint.value.setRGB(0.6, 0.6, 0.78);
-    } else if (tod === 'dawn') {
-      S.uSunAmt.value = 0.6; S.uAmbient.value = 0.38; S.uLampAmt.value = 0.35; S.uLampFall.value = 1.2; S.uRimAmt.value = 0.3;
-      S.uLightTint.value.setRGB(0.97, 0.97, 1.0); S.uShadeTint.value.setRGB(0.62, 0.66, 0.82);
-    } else if (tod === 'night') {
-      S.uSunAmt.value = 0.15; S.uAmbient.value = 0.16; S.uLampAmt.value = 1.2; S.uLampFall.value = 0.8; S.uRimAmt.value = 1.2;
-      S.uLightTint.value.setRGB(0.8, 0.84, 1.0); S.uShadeTint.value.setRGB(0.45, 0.5, 0.75);
-    } else {
-      S.uSunAmt.value = 0.9; S.uAmbient.value = 0.42; S.uLampAmt.value = 0; S.uRimAmt.value = 0;
-      S.uLightTint.value.setRGB(1, 0.98, 0.94); S.uShadeTint.value.setRGB(0.62, 0.66, 0.82);
-    }
+  // Everything the light depends on, as one state, so a dusk can deepen into a night by mixing two.
+  lightState(tod, haar = this.night.haar || 0, sunDir = null) {
+    const n = this.night;
+    const P = palette(tod === 'night' ? 'night' : tod === 'dawn' ? 'dawn' : tod === 'day' ? 'afternoon' : 'dusk', n.look?.cool || 0, !!n.goldenSunset && tod === 'dusk');
+    const col = (h) => new THREE.Color(h);
+    const L = {
+      P, tod,
+      top: col(P.skyTop), mid: col(P.skyMid), low: col(P.skyLow), hor: col(P.skyHor), cloud: col(P.cloud),
+      seaNear: col(P.seaNear), seaMid: col(P.seaMid), seaFar: col(P.seaFar),
+      sunCol: col(P.sun ? P.sun.c : '#E8ECF4'), sunGlow: P.sun ? 0.8 : 0, stars: 0,
+      sunDir: (sunDir || (tod === 'dawn' ? DAWN_SUN : DUSK_SUN)).clone(),
+    };
+    const set = (sunAmt, ambient, lampAmt, lampFall, rim, lt, st) => Object.assign(L, { sunAmt, ambient, lampAmt, lampFall, rim, lightTint: new THREE.Color(...lt), shadeTint: new THREE.Color(...st) });
+    if (tod === 'dusk') set(0.55, 0.3, 1.1, 0.9, 1, [1.0, 0.94, 0.86], [0.6, 0.6, 0.78]);
+    else if (tod === 'dawn') set(0.6, 0.38, 0.35, 1.2, 0.3, [0.97, 0.97, 1.0], [0.62, 0.66, 0.82]);
+    else if (tod === 'night') {
+      set(0.2, 0.12, 1.25, 0.8, 1.2, [0.52, 0.58, 0.82], [0.3, 0.34, 0.56]);
+      L.stars = 1 - Math.min(1, haar) * 0.85;
+      L.sunGlow = 0;
+    } else set(0.9, 0.42, 0, 0.35, 0, [1, 0.98, 0.94], [0.62, 0.66, 0.82]);
     // haar: the light goes grey and flat, the sun's warmth taken out of it
     if (haar > 0) {
       const h = Math.min(1, haar);
-      S.uLightTint.value.lerp(new THREE.Color(0.86, 0.88, 0.9), h * 0.7);
-      S.uShadeTint.value.lerp(new THREE.Color(0.68, 0.71, 0.77), h * 0.6);
-      S.uSunAmt.value *= 1 - 0.65 * h;
-      S.uAmbient.value += 0.12 * h;
-      S.uRimAmt.value *= 1 - 0.3 * h;
+      L.lightTint.lerp(new THREE.Color(0.86, 0.88, 0.9), h * 0.7);
+      L.shadeTint.lerp(new THREE.Color(0.68, 0.71, 0.77), h * 0.6);
+      L.sunAmt *= 1 - 0.65 * h;
+      L.ambient += 0.12 * h;
+      L.rim *= 1 - 0.3 * h;
     }
-    S.uFogDensity.value = 0.0015 + haar * 0.02;
-    this.room.flame.visible = this.room.halo.visible = tod !== 'day';
-    this.palette = P;
+    L.fogDensity = 0.0015 + haar * 0.02;
+    return L;
+  }
+
+  mixLight(a, b, k) {
+    const out = { ...b };
+    for (const key of Object.keys(a)) {
+      const va = a[key], vb = b[key];
+      if (va instanceof THREE.Color) out[key] = va.clone().lerp(vb, k);
+      else if (va instanceof THREE.Vector3) out[key] = va.clone().lerp(vb, k).normalize();
+      else if (typeof va === 'number') out[key] = va + (vb - va) * k;
+    }
+    out.tod = k < 0.5 ? a.tod : b.tod;
+    return out;
+  }
+
+  applyLight(L) {
+    const S = this.world.shared, u = this.world.sky.material.uniforms;
+    u.uTop.value.copy(L.top); u.uMid.value.copy(L.mid); u.uLow.value.copy(L.low); u.uHor.value.copy(L.hor); u.uCloud.value.copy(L.cloud);
+    u.uStars.value = L.stars;
+    u.uSunPos.value.copy(L.sunDir); u.uSunGlow.value = L.sunGlow; u.uSunCol.value.copy(L.sunCol);
+    S.uSunDir.value.copy(L.sunDir);
+    this.room.flame.getWorldPosition(S.uLampPos.value);
+    S.uSunAmt.value = L.sunAmt; S.uAmbient.value = L.ambient; S.uLampAmt.value = L.lampAmt; S.uLampFall.value = L.lampFall; S.uRimAmt.value = L.rim;
+    S.uLightTint.value.copy(L.lightTint); S.uShadeTint.value.copy(L.shadeTint);
+    S.uFogDensity.value = L.fogDensity;
+    S.uFogNear.value = 8;
+    this.room.flame.visible = this.room.halo.visible = L.tod !== 'day';
+    this.bay.setPalette(L);
+    this.palette = L.P;
+    this.light = L;
+  }
+
+  setLight(tod, haar = this.night.haar || 0) { this.applyLight(this.lightState(tod, haar)); }
+
+  // where the moon is, p through the night: low on the right of the window, climbing across it
+  moonAt(p) {
+    const yaw = ROOM_YAW - lerp(0.05, 0.62, p);
+    const el = lerp(0.03, 0.24, smooth(0, 0.6, p)) - smooth(0.75, 1, p) * 0.06;
+    return new THREE.Vector3(-Math.sin(yaw) * Math.cos(el), Math.sin(el), -Math.cos(yaw) * Math.cos(el));
   }
 
   // ---------------- poses ----------------
@@ -304,6 +396,32 @@ export class Keeper {
 
   pointer(kind, e) {
     if (!this.active()) return;
+    if (this.fly) {
+      if (kind === 'down') this.flyDrag = { x: e.clientX, y: e.clientY };
+      else if (kind === 'move' && this.flyDrag) {
+        this.fly.yaw -= (e.clientX - this.flyDrag.x) * 0.004;
+        this.fly.pitch = clamp(this.fly.pitch - (e.clientY - this.flyDrag.y) * 0.004, -1.5, 1.5);
+        this.flyDrag = { x: e.clientX, y: e.clientY };
+      } else if (kind === 'up') this.flyDrag = null;
+      return;
+    }
+    if (this.state === 'chair' || this.state === 'dawn-chair') {
+      if (kind === 'down') this.press = { x: e.clientX, y: e.clientY, t: performance.now() };
+      if (kind === 'move' && e.pointerType === 'mouse' && this.watch) {
+        const [nx, ny] = this.ndc(e);
+        this.ray.setFromCamera(new THREE.Vector2(nx, ny), this.world.camera);
+        this.noteHover = this.ray.intersectObject(this.room.sill.note, true).length > 0;
+      }
+      if (kind === 'up' && this.press) {
+        const p = this.press;
+        this.press = null;
+        if (Math.hypot(e.clientX - p.x, e.clientY - p.y) < 9 && performance.now() - p.t < 450) {
+          if (this.state === 'dawn-chair') this.toLogbook();
+          else this.clickChair(e);
+        }
+      }
+      return;
+    }
     if (this.state === 'walk' && kind === 'down' && e.pointerType !== 'touch' && this.walker.locked) { this.use(); return; }
     if (this.state === 'walk' && kind === 'down' && e.pointerType !== 'touch' && this.focus() === 'book' && !this.walker.wantLock) { this.use(); return; }
     if (this.state !== 'lean') return;
@@ -328,6 +446,18 @@ export class Keeper {
       this.flash = { text: this.poseOverride ? 'hands: ' + this.poseOverride : 'hands: by the moment', t: 0 };
       return true;
     }
+    if (this.game.debug && !e.metaKey && !e.ctrlKey) {
+      if (k === 'c' || k === 'C') { this.toggleFly(); return true; }
+      if (k === 't' || k === 'T') {
+        const g = this.game, i = TIME_SCALES.indexOf(g.timeScale);
+        g.timeScale = TIME_SCALES[(i + 1) % TIME_SCALES.length];
+        this.flash = { text: 'time ×' + g.timeScale, t: 0 };
+        return true;
+      }
+      if (this.fly && 'wWaAsSdDeEqQ'.includes(k)) return true;
+    }
+    if (this.state === 'chair' && this.watch && (k === ' ' || k === 'l' || k === 'L')) { this.toggleLapse(); return true; }
+    if (this.state === 'dawn-chair' && (k === 'e' || k === 'E' || k === 'Enter' || k === ' ')) { this.toLogbook(); return true; }
     if (this.state === 'walk' && (k === 'e' || k === 'E' || k === 'Enter' || k === ' ')) { this.use(); return true; }
     if (this.state === 'lean') {
       if (k === 'Escape' || k === 'q' || k === 'Q') { this.standUp(); return true; }
@@ -403,6 +533,15 @@ export class Keeper {
         }
         break;
       }
+      case 'chair':
+      case 'dawn-chair':
+        this.chairLook(dt);
+        if (this.state === 'chair' && this.watch) this.updateNight(dt);
+        if (this.state === 'dawn-chair') {
+          this.dawnBeam += dt * 0.2;
+          if (g.autoplay && this.st > 1.5) this.toLogbook();
+        }
+        break;
       case 'closing': {
         const k = smooth(0.15, 1.1, this.st);
         this.book.setClosed(k);
@@ -418,10 +557,145 @@ export class Keeper {
     }
     this.stepBlend(dt);
     this.lit = Math.max(0, this.lit - dt * 0.4);
+    if (this.fly) this.flyCam(dt);
     this.applyCamera();
     this.updateHands(dt);
     this.updateClock();
+    this.bay.update(dt, this.world.camera, this.bayView());
     this.updatePrompt(dt);
+  }
+
+  // ---------------- the chair ----------------
+  // sitting, the view can be turned a little (drag, or the arrow keys), but the body stays put
+  chairLook(dt) {
+    const base = this.chairPose(), w = this.walker, k = this.game.input.keys;
+    if (!this.fly) {
+      const ax = (k.has('ArrowLeft') ? 1 : 0) - (k.has('ArrowRight') ? 1 : 0);
+      const ay = (k.has('ArrowUp') ? 1 : 0) - (k.has('ArrowDown') ? 1 : 0);
+      w.yaw += ax * dt * 0.9; w.pitch += ay * dt * 0.6;
+    }
+    w.yaw = base.yaw + clamp(wrapA(w.yaw - base.yaw), -0.8, 0.8);
+    w.pitch = clamp(w.pitch, base.pitch - 0.3, base.pitch + 0.42);
+    if (this.blendT) return;
+    this.cam.pos.copy(base.pos);
+    this.cam.pos.y += Math.sin(this.t * 1.1) * 0.003;
+    this.cam.yaw = w.yaw; this.cam.pitch = w.pitch + Math.sin(this.t * 1.1 + 0.7) * 0.0012; this.cam.roll = 0;
+    this.cam.fov = base.fov;
+  }
+
+  updateNight(dt) {
+    const W = this.watch, n = this.night;
+    W.update(dt);
+    if (this.watch !== W) return;   // the night ended in that update: it's dawn now
+    const p = this.nightP = W.progress();
+    // the dusk deepens into night over the first moments in the chair
+    const k = this.nightK = smooth(0, 9, W.t);
+    this.moonDir = this.moonAt(p);
+    this.applyLight(this.mixLight(this.lightState('dusk'), this.lightState('night', n.haar || 0, this.moonDir), k));
+    // the stars wheel about the pole
+    this.world.sky.material.uniforms.uStarRot.value.setFromMatrix4(new THREE.Matrix4().makeRotationAxis(POLE, -p * 2.3));
+    if (hasReef(n)) this.bay.raiseReef('newrock', W.view().reefRise);
+    // the sill: the clock keeps the night, the oil and the tea go down; now and then a sip
+    const S = this.room.sill;
+    S.oil.scale.y = lerp(0.062, 0.02, p);
+    const gutter = 1 - smooth(0.85, 1, p) * 0.35 * (0.6 + 0.4 * Math.sin(W.t * 13) * Math.sin(W.t * 7.3));
+    S.flame.material.uniforms.uAmt.value = 1.6 * gutter;
+    S.glow.material.uniforms.uAmt.value = 0.25 * gutter;
+    const due = [0.24, 0.52, 0.78];
+    if (!this.sip && this.sips < due.length && p > due[this.sips] && !W.beatActive() && !W.near) this.sip = { t: 0, level: this.room.mug.userData.tea.position.y };
+    if (this.sip) {
+      this.sip.t += dt;
+      const tea = this.room.mug.userData.tea;
+      tea.position.y = this.sip.level - smooth(1.6, 2.8, this.sip.t) * 0.014;
+      if (this.sip.t > 4.6) { this.sip = null; this.sips++; }
+    }
+  }
+
+  // what the bay should show this frame
+  bayView() {
+    const n = this.night, haar = n.haar || 0;
+    if (this.watch && this.mode === 'night') {
+      const W = this.watch, v = W.view();
+      const lampOn = this.lampLit ? 1 : 0;
+      v.beam.amt = lampOn * smooth(0, 3, W.t) * (0.5 + haar * 0.5);
+      v.beam.reach = 1 - haar * 0.55;
+      v.beam.haar = haar;
+      const moonVis = n.weather === 'rain' ? 0 : n.weather === 'grey' ? 0.35 : 1 - haar * 0.6;
+      v.moon = { dir: this.moonDir || this.moonAt(0), amt: (this.nightK ?? 1) * moonVis };
+      return v;
+    }
+    if (this.mode === 'dawn' && this.dawnShips) {
+      return { ships: this.dawnShips, fleetT: 0, t: this.t, beam: { angle: this.dawnBeam, amt: 0.08, reach: 0.6, haar, blur: 0, spread: 0, hits: [] }, moon: null };
+    }
+    // dusk: the beam not yet lit, no boats
+    return { ships: [], fleetT: 0, t: this.t, beam: { angle: 0, amt: this.lampLit ? smooth(1.7, 3, this.st) * 0.4 : 0, reach: 1 - haar * 0.55, haar, blur: 0, spread: 0, hits: [] }, moon: null };
+  }
+
+  toggleLapse() {
+    const W = this.watch;
+    if (!W) return;
+    W.setLapse(!W.lapse);
+    this.lapse = W.lapse;
+    this.drawNote(W.lapse);
+    this.game.audio?.page?.();
+    this.flash = { text: W.lapse ? 'the night runs on' : 'the night is slow', t: 0 };
+  }
+
+  // the note to oneself, with the way the night is going ticked
+  drawNote(on) {
+    const S = this.room.sill, c = S.noteCanvas, x = c.getContext('2d');
+    x.clearRect(0, 0, c.width, c.height);
+    const lines = [['let the night run on', true], ['let the night be slow', false]];
+    lines.forEach(([text, isOn], i) => {
+      const y = 62 + i * 58, active = isOn === on;
+      letter(x, text, 46, y, { hand: 'keeper', size: 34, alpha: active ? 0.92 : 0.5, color: '#2B2622', seed: i });
+      if (active) inkLine(x, [[30, y - 18], [36, y - 8], [44, y - 30]], { width: 3, alpha: 0.85, seed: 3 + i, breaks: 0 });
+    });
+    S.noteTex.needsUpdate = true;
+  }
+
+  toLogbook() {
+    if (this.leaving || this.state !== 'dawn-chair') return;
+    this.leaving = true;
+    this.game.onDawnSeen();
+  }
+
+  // a click from the chair: the note, or a place on the water for the beam to rest
+  clickChair(e) {
+    const [nx, ny] = this.ndc(e);
+    const rc = this.ray;
+    rc.setFromCamera(new THREE.Vector2(nx, ny), this.world.camera);
+    if (rc.intersectObject(this.room.sill.note, true).length) { this.toggleLapse(); return; }
+    if (!this.watch || this.mode !== 'night') return;
+    const o = rc.ray.origin, d = rc.ray.direction;
+    if (d.y > -1e-4) return;
+    // not through the wall
+    const wall = rc.intersectObject(this.room.group, true)[0];
+    if (wall && wall.distance < 4) return;
+    const p = o.clone().addScaledVector(d, (this.bay.tide - o.y) / d.y);
+    const c = [p.x / UNIT, p.z / UNIT];
+    if (landHeight(c[0], c[1]) > this.bay.tide + 0.3) return;
+    this.watch.lingerAt(c);
+    this.game.audio?.soft?.();
+  }
+
+  // ---------------- debug: free-fly ----------------
+  toggleFly() {
+    if (this.fly) { this.fly = null; this.flash = { text: 'free-fly off', t: 0 }; return; }
+    this.fly = { pos: this.cam.pos.clone(), yaw: this.cam.yaw, pitch: this.cam.pitch, fov: this.cam.fov };
+    this.flash = { text: 'free-fly: WASD, E/Q up/down, drag to look, shift fast', t: 0 };
+  }
+
+  flyCam(dt) {
+    const f = this.fly, k = this.game.input.keys;
+    const has = (...ks) => ks.some((x) => k.has(x));
+    const sp = (has('Shift') ? 40 : 6) * dt;
+    const fw = (has('w', 'W') ? 1 : 0) - (has('s', 'S') ? 1 : 0), rt = (has('d', 'D') ? 1 : 0) - (has('a', 'A') ? 1 : 0), up = (has('e', 'E') ? 1 : 0) - (has('q', 'Q') ? 1 : 0);
+    const dir = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(f.pitch, f.yaw, 0, 'YXZ'));
+    const right = new THREE.Vector3(Math.cos(f.yaw), 0, -Math.sin(f.yaw));
+    f.pos.addScaledVector(dir, fw * sp).addScaledVector(right, rt * sp);
+    f.pos.y += up * sp;
+    this.cam.pos.copy(f.pos); this.cam.yaw = f.yaw; this.cam.pitch = f.pitch; this.cam.roll = 0; this.cam.fov = f.fov;
   }
 
   // standing at the lamp control, near enough to reach the lever; it sits right of centre
@@ -443,14 +717,14 @@ export class Keeper {
     return this.poseLooking(eye, ring.clone().addScaledVector(side, 0.12).add(new THREE.Vector3(0, 0.3, 0)), 62);
   }
 
-  // sitting forward in the chair, looking out and down over the bay; the forearms on the chair's arms
-  // are just in view at the bottom
+  // sitting back in the chair: the whole window and the sill, and the forearms resting on the chair's
+  // arms at the bottom of the view
   chairPose() {
     const c = this.room.chair;
-    const seat = new THREE.Vector3(0, 1.12, 0.1).applyMatrix4(c.matrixWorld);
+    const seat = new THREE.Vector3(0, 1.2, 0.12).applyMatrix4(c.matrixWorld);
     const out = this.roomPoint(ROOM.window.deg, ROOM.R + 6, 0.6);
-    const p = this.poseLooking(seat, out, 64);
-    p.pitch = -0.34;
+    const p = this.poseLooking(seat, out, 72);
+    p.pitch = -0.26;
     return p;
   }
 
@@ -476,7 +750,9 @@ export class Keeper {
       case 'lean-out': return sc.inking ? 'pen' : 'lean';
       case 'light': return 'lamp';
       case 'to-chair': return 'walk';
-      case 'chair': return 'chair';
+      case 'chair': return this.sip && this.sip.t > 0.2 && this.sip.t < 4.0 ? 'mug' : 'chair';
+      case 'dawn-chair': return 'chair';
+      case 'rise': return 'walk';
       case 'closing': return 'close';
       case 'review': return this.reviewPose;
       default: return 'lean';
@@ -542,13 +818,22 @@ export class Keeper {
       } else if (this.tip.lengthSq() === 0 || this.tipStale) { b.worldAt(b.single ? 430 : 1150, b.single ? 700 : 560, this.tip); this.tip.y += 0.006; this.tipStale = false; }
     }
     h.tip = this.tip;
-    // the mug comes off the sill into the hands, and goes back
-    const mug = this.room.mug, inHands = this.hands.pose === 'mug';
-    if (inHands !== this.mugHeld) {
-      this.mugHeld = inHands;
-      if (inHands) this.world.scene.add(mug); else { this.room.group.add(mug); mug.position.copy(mug.userData.home); mug.quaternion.identity(); }
+    // the mug comes off the sill into the hands, and goes back, carried as the hands move
+    const mug = this.room.mug, hb = this.hands.blend;
+    const held = ease(this.hands.pose === 'mug' ? hb : (this.hands.from && this.lastHandPose === 'mug' ? 1 - hb : 0));
+    if (this.hands.blend >= 1) this.lastHandPose = this.hands.pose;
+    if ((held > 0) !== !!this.mugHeld) {
+      this.mugHeld = held > 0;
+      if (held > 0) this.world.scene.add(mug); else { this.room.group.add(mug); mug.position.copy(mug.userData.home); mug.quaternion.identity(); }
     }
-    if (inHands) { const mf = this.frames.mug; mug.position.copy(mf.pos).add(new THREE.Vector3(0, -0.045, 0)); mug.quaternion.copy(mf.quat); }
+    if (held > 0) {
+      const mf = this.frames.mug, rg = this.room.group;
+      const home = mug.userData.home.clone().applyMatrix4(rg.matrixWorld), homeQ = rg.quaternion.clone();
+      const hand = mf.pos.clone().add(new THREE.Vector3(0, -0.045, 0));
+      mug.position.lerpVectors(home, hand, held);
+      mug.position.y += Math.sin(held * Math.PI) * 0.06;
+      mug.quaternion.slerpQuaternions(homeQ, mf.quat, held);
+    }
     const sh = (x) => new THREE.Vector3(x, -0.25, 0.1).applyQuaternion(body.quat).add(body.pos);
     const pole = (x) => new THREE.Vector3(x, -1, 0.25).applyQuaternion(body.quat);
     h.setStain(0.12 + 0.75 * Math.min(1, ((this.night?.id || 1) - 1) / 14));
@@ -614,11 +899,11 @@ export class Keeper {
   }
 
   updateClock() {
-    // the clock keeps the game's time of day (dusk ≈ 7, through the night to 6)
-    const h = this.mode === 'dusk' ? 19.2 + this.t / 600 : 5.8 + this.t / 600;
-    const r = this.room;
-    r.hourHand.rotation.z = -((h % 12) / 12) * Math.PI * 2;
-    r.minHand.rotation.z = -((h % 1)) * Math.PI * 2;
+    // the clocks keep the game's time of day (dusk ≈ 7, through the night, first light ≈ 6)
+    const h = this.watch && this.mode === 'night' ? this.watch.hour() : this.mode === 'dusk' ? 19.2 + this.t / 600 : 5.8 + this.t / 600;
+    const r = this.room, S = r.sill;
+    r.hourHand.rotation.z = S.hour.rotation.z = -((h % 12) / 12) * Math.PI * 2;
+    r.minHand.rotation.z = S.min.rotation.z = -((h % 1)) * Math.PI * 2;
   }
 
   updatePrompt() {
@@ -626,18 +911,113 @@ export class Keeper {
     if (this.state === 'walk' && this.focus() === 'book') this.prompt = this.game.input.type === 'mouse' ? 'E — lean over the logbook' : 'tap — lean over the logbook';
     else if (this.state === 'walk' && this.st < 6 && this.mode === 'dusk') this.prompt = 'the logbook is open on the table';
     else if (this.state === 'lean' && this.mode === 'dusk' && !this.book.scene.inking) this.prompt = this.game.input.type === 'mouse' ? 'Esc — stand up' : null;
+    else if (this.state === 'dawn-chair' && this.st > 1.2) this.prompt = this.game.input.type === 'mouse' ? 'E — over to the logbook' : 'tap — over to the logbook';
+    else if (this.state === 'chair' && this.watch) {
+      const mouse = this.game.input.type === 'mouse', W = this.watch;
+      if (this.noteHover) this.prompt = (mouse ? 'click' : 'tap') + (W.lapse ? ' — let the night be slow' : ' — let the night run on');
+      else if (this.game.state.nightsPlayed < 2 && W.t > 4 && W.t < 15) this.prompt = (mouse ? 'click' : 'tap') + ' the water, and the beam will rest there';
+    }
   }
 
   // ---------------- look + HUD ----------------
   look() {
+    if (this.mode === 'night' || (this.mode === 'dawn' && this.dawnShips && this.game.sceneName === 'bay')) return this.lookBay();
     const n = this.night;
     const base = { ...n.look };
-    base.fog = (n.look.fog || 0) * 0.85;
+    base.fog = (n.haar || 0) * 0.8;
+    base.fogColor = fogColorFor(this.mode === 'dawn' ? 'dawn' : 'dusk');
     if (this.mode === 'dusk' || this.mode === 'dawn') base.warmth = (n.look.warmth ?? 0.5) + (this.mode === 'dusk' ? 0.12 : -0.05);
     base.lightGain = 1;
     base.wobble = 2.2;
     if (this.lookOverride) Object.assign(base, this.lookOverride);
     return base;
+  }
+
+  // the bay from the chair: the night's grading, its haar, the parting for Mag Mell, the cloak
+  lookBay() {
+    const n = this.night, lk = n.look, dawn = this.mode === 'dawn';
+    const k = dawn ? 1 : this.nightK ?? 1;
+    const W = this.watch, m = W?.manannan;
+    let fog = (n.haar || 0) * (dawn ? 0.55 : 1);
+    if (m && m.a > 0) fog *= 1 - m.a * 0.15;
+    const fd = fogColorFor('dusk'), fn = fogColorFor(dawn ? 'dawn' : 'night');
+    const out = {
+      warmth: lk.warmth + (dawn ? 0.1 : lerp(0.07, -0.05, k)), sat: lk.sat, paperShow: lk.paperShow + (dawn ? 0.05 : 0),
+      bleed: lk.bleed, inkSpread: lk.inkSpread, gran: lk.gran, fog, fogColor: fd.map((v, i) => v + (fn[i] - v) * k),
+      wobble: 2.2 + lk.bleed * 3, edge: 1, lightGain: 1, clearAmt: 0, cloakAmt: 0,
+    };
+    if (W && W.magMell > 0) {
+      const uv = this.screenUv(this.bay.magMell.position.clone().setY(30));
+      if (uv) { out.clear = [uv[0], uv[1], 0.16, 0.1]; out.clearAmt = W.magMell * 1.1; }
+    }
+    if (m && m.t0 != null && m.a > 0) {
+      const cam = this.world.camera;
+      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(cam.quaternion).setY(0).normalize();
+      const sh = this.bay.manannan.position.clone().setY(22);
+      const c = this.screenUv(sh.clone().addScaledVector(right, 8)), a = this.screenUv(sh.clone().addScaledVector(right, 37)), b = this.screenUv(sh.clone().setY(39));
+      if (c && a && b) { out.cloak = [c[0], c[1], Math.abs(a[0] - c[0]) + 0.02, Math.abs(b[1] - c[1]) + 0.02]; out.cloakAmt = m.a * 0.6; }
+    }
+    if (this.lookOverride) Object.assign(out, this.lookOverride);
+    return out;
+  }
+
+  // a world point on screen, as uv (0..1, y up), or null when behind
+  screenUv(v) {
+    const p = v.clone().project(this.world.camera);
+    if (p.z > 1) return null;
+    return [(p.x + 1) / 2, (p.y + 1) / 2];
+  }
+
+  // the night, from the chair: rain on the glass, and near dawn the eyelids getting heavy
+  drawNightHud(L) {
+    const v = L.view;
+    if (this.night.weather === 'rain') {
+      const poly = this.windowOnScreen(L);
+      if (poly) {
+        // pale streaks laid over the world (on the paint layer: pale ink wouldn't show over a dark night)
+        const ink = L.paint;
+        ink.save();
+        ink.beginPath(); poly.forEach(([x, y], i) => (i ? ink.lineTo(x, y) : ink.moveTo(x, y))); ink.closePath(); ink.clip();
+        ink.strokeStyle = rgba('#B8C0D0', 0.35);
+        ink.lineWidth = 1.4;
+        const r = rng(Math.floor(this.t * 12));
+        for (let i = 0; i < 110; i++) {
+          const x = lerp(v.x0, v.x1, r()), y = lerp(v.y0, v.y1, r());
+          ink.beginPath(); ink.moveTo(x, y); ink.lineTo(x - 5, y + 20); ink.stroke();
+        }
+        ink.restore();
+      }
+    }
+    const p = this.nightP || 0;
+    if (p > 0.8) {
+      // heavy lids, and every so often a long blink
+      const bt = (this.watch.t % 6.5) / 6.5;
+      const blink = p > 0.86 ? smooth(0.9, 0.95, bt) * (1 - smooth(0.96, 1, bt)) : 0;
+      const lid = smooth(0.8, 1, p) * 0.2 + blink * 0.32;
+      const H = v.y1 - v.y0, c = L.paint;
+      for (const top of [true, false]) {
+        const edge = top ? v.y0 + H * lid : v.y1 - H * lid * 0.8;
+        const soft = H * 0.12;
+        const g = c.createLinearGradient(0, top ? v.y0 : v.y1, 0, top ? edge + soft : edge - soft);
+        g.addColorStop(0, 'rgba(34,28,26,0.94)');
+        g.addColorStop(Math.max(0.01, 1 - soft / (Math.abs(edge - (top ? v.y0 : v.y1)) + soft)), 'rgba(34,28,26,0.85)');
+        g.addColorStop(1, 'rgba(34,28,26,0)');
+        c.fillStyle = g;
+        c.fillRect(v.x0 - 10, top ? v.y0 - 10 : edge - soft, v.x1 - v.x0 + 20, top ? edge + soft - v.y0 + 10 : v.y1 - edge + soft + 10);
+      }
+    }
+  }
+
+  // the window opening on screen, in layout units
+  windowOnScreen(L) {
+    const w = ROOM.window, R = ROOM.R + 0.42, a = w.deg * DEG;
+    const cam = this.world.camera, out = [];
+    for (const [s, y] of [[-1, w.sill], [1, w.sill], [1, w.top], [-1, w.top]]) {
+      const pl = new THREE.Vector3(Math.sin(a) * R + Math.cos(a) * s * w.half, y, -Math.cos(a) * R + Math.sin(a) * s * w.half).applyMatrix4(this.room.group.matrixWorld).project(cam);
+      if (pl.z > 1) return null;
+      out.push(L.toLogical((pl.x + 1) / 2 * L.cssW, (1 - pl.y) / 2 * L.cssH));
+    }
+    return out;
   }
 
   cursor() {
@@ -649,9 +1029,13 @@ export class Keeper {
     return this.walker.locked ? 'none' : 'default';
   }
 
-  hudActive() { return !!this.prompt || !!this.walker.stick || !!this.flash; }
+  hudActive() {
+    const night = this.state === 'chair' && this.watch;
+    return !!this.prompt || !!this.walker.stick || !!this.flash || (night && (this.night.weather === 'rain' || this.nightP > 0.8));
+  }
 
   drawHud(L) {
+    if (this.state === 'chair' && this.watch) this.drawNightHud(L);
     this.walker.drawTouch(L);
     if (this.flash) {
       const v = L.view;
@@ -661,7 +1045,8 @@ export class Keeper {
     const v = L.view;
     const x = (v.x0 + v.x1) / 2, y = v.y1 - 70;
     const w = measure(L.ink, this.prompt, 'keeper', 34);
-    const a = this.state === 'walk' && this.focus() !== 'book' ? 0.6 * (1 - smooth(4, 6, this.st)) : 0.85;
+    let a = this.state === 'walk' && this.focus() !== 'book' ? 0.6 * (1 - smooth(4, 6, this.st)) : 0.85;
+    if (this.state === 'chair' && this.watch && !this.noteHover) a = 0.7 * smooth(4, 5.5, this.watch.t) * (1 - smooth(13, 15, this.watch.t));
     blob(L.paint, x, y - 12, w * 0.62 + 30, 30, '#F2EAD9', 0.75 * a, 3, 0.12);
     letter(L.ink, this.prompt, x, y, { hand: 'keeper', size: 34, align: 'center', alpha: a, color: '#2B2622' });
     // a small mark at the centre of the view while walking

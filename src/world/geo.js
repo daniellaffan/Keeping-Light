@@ -11,7 +11,7 @@ export const toChart = (v) => [v.x / UNIT, v.z / UNIT];
 export const CLIFF_TOP = 18;
 export const TOWER = toWorld(LIGHTHOUSE[0], LIGHTHOUSE[1], CLIFF_TOP);
 // The watch-room window looks out over the middle of the bay.
-const BAY_AIM = toWorld(46, 26);
+const BAY_AIM = toWorld(50, 30);
 export const ROOM_YAW = Math.atan2(-(BAY_AIM.x - TOWER.x), -(BAY_AIM.z - TOWER.z));
 
 // Sky colours for a palette from bay-paint.js

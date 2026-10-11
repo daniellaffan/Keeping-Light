@@ -229,3 +229,98 @@ Sheets: [write](docs/screenshots/hands-write.jpg), [pen](docs/screenshots/hands-
   how it really looks, but it isn't pretty.
 * The turn and close poses are momentary, so they were checked only at a held frame.
 * The view out of the window is still the placeholder sea and cliff. The bay comes in milestone 4.
+
+## First person: the night from the chair (milestone 4)
+
+The plan is inked, the keeper pulls the lamp lever and sits in the chair at the window. The camera
+never cuts: dusk deepens into night around the chair over about nine seconds, and the night runs
+until dawn.
+
+**The bay** (`src/world/bay.js`) is built from the chart, at 4 m to a chart unit.
+* **Land.** The terrain comes from the `LAND` polygons by signed distance. It is tinted by height and
+  slope: grass, rock, shingle and seabed.
+* **Water.** The sea is a disc of rings around the tower, its colour graded near to far from
+  `night.palette`.
+* **Features.** The stacks, the reefs (their tops at the tide's height, so they show and hide with
+  it), the village with lit windows and their reflections, and the piers.
+* **Ships.** Three sizes, each with a hull, sails, a lantern and a halo. Each also has a reflection,
+  a shadow and a wake.
+* **Light.** The beam is a cone on the lamp, with blur copies, and a moon with its road on the water.
+* **The beats.** Mag Mell, out on the open horizon. Manannán, a robed figure in the haar.
+
+**The night** (`src/world/night.js`) drives `Fleet` with the inked waypoints, so the boats sail
+exactly the inked line.
+* **Pace.** Boats move at a believable 4 m/s. The 2D game's story clock (reef at 16 s, Mag Mell at
+  20 s) is kept by dividing.
+* **Time-lapse.** The night runs at ×5. It eases to ×1 when:
+  * a boat comes within reach of a hazard (looking 0, 3 and 6 units ahead);
+  * a boat arrives or strikes (held for a few seconds);
+  * a beat is happening: the reef rising, the phantom reflection, Mag Mell, or Manannán.
+* **Beam.** The beam turns with the night's time, so a fast night blurs it into a fan of copies.
+* **Length.** A typical night lasts about two and a half minutes in time-lapse.
+
+**From the chair.**
+* **The windowsill:**
+  * A carriage clock keeps the night's hour (21:00 to about 05:40), as does the wall clock.
+  * A paraffin lamp's oil goes down and the flame gutters near dawn.
+  * The mug comes off the sill into the hands for a sip three times a night, and the tea goes down.
+  * A folded note reads "let the night run on / let the night be slow". Clicking it, or Space,
+    ticks the other line and switches the time-lapse. Debug `F` and `T` stack on top.
+* **The sky.** The moon climbs across the window and the stars wheel about the pole.
+* **The water.** Clicking the water holds the beam there for five seconds, on a boat if one is near.
+  A ray is cast to the tide plane; land and the room's walls are ignored.
+* **The HUD.** Rain streaks on the glass, clipped to the window, on rain nights. Near dawn the
+  eyelids get heavy and blink.
+* **Looking around.** The view turns a little by drag or the arrow keys; the body stays put.
+
+**Dawn.** The night ends and the scene crossfades to dawn in the chair (time has jumped).
+* The boats are moored, or wrecked where they struck.
+* "E — over to the logbook": the keeper gets up and leans over the book with no cut. The dawn page
+  writes itself, as before.
+
+**Look.**
+* Grading follows `night.look`, warming with dusk and cooling into night.
+* The composite's depth fog takes the night's haar.
+* `clear` is placed by projecting Mag Mell to the screen; `cloak` by projecting Manannán.
+* The beam glows when seen from the side. Seen from under the lamp, along the beam, every surface
+  is grazing, so the glow comes from looking down its length instead.
+
+**Changes to earlier milestones.**
+* **Window.** It is wider (0.78 m half-width) with a single transom above a seated eye, so the
+  horizon is not hidden behind a glazing bar.
+* **Aim.** The room now faces chart (50, 30), so the reefs fall inside the window.
+* **Seat.** The chair pose sits back with the hands on the chair arms at the bottom of the view.
+* **Camera.** The near plane is 0.06 m.
+
+**Debug.**
+* `C` free-fly: WASD, E/Q for up and down, drag to look, Shift for speed.
+* `T` cycles the time scale: 1, 2, 4, ½, ¼.
+* The debug panel's next-phase (`N`) still works through the night and dawn.
+
+**Verified.**
+* Nights 4 (rain), 6, 10 (new reef, phantom), 13 (Mag Mell) and 16 (Manannán) were each run to dawn
+  under `?debug=1&view=fp&night=N&phase=night`.
+* `?debug=1&autoplay=1&view=fp` runs from the title through all 19 nights and the finale back to the
+  title with no console errors.
+* `node tools/check-nights.mjs` passes.
+* `?view=classic` (the default) is unchanged.
+* The bay adds about 1.2 ms a frame at 1920×1458 on this Mac.
+
+Screenshots:
+* [night 6](docs/screenshots/17-night6-chair.jpg)
+* [a sip of tea](docs/screenshots/18-night6-chair-tea.jpg)
+* [Mag Mell](docs/screenshots/19-night13-mag-mell-chair.jpg)
+* [Manannán](docs/screenshots/20-night16-manannan-chair.jpg)
+* [rain](docs/screenshots/21-night4-rain-chair.jpg)
+* [dawn](docs/screenshots/22-night10-dawn-chair.jpg)
+
+**Still rough.**
+* **The window is narrow for the chart.** Ships enter on the far west, about 90° left of it, so each
+  boat appears some way into its route. The newest reefs sit at the right edge.
+* **Small boats are small.** At 300 m a boat is a few pixels with a lantern. Its lantern and the
+  beam's hit carry it.
+* **Where the beam meets the land.** It leaves a soft round pool on the far hill.
+* **The terrain from above.** Free-fly shows straight creases along the land's grid. They aren't
+  visible from the chair, but the headland walk (milestone 5) will need them softened.
+* **Audio.** Footsteps and room tone with reverb are not in yet; they come with the walk in
+  milestone 5.

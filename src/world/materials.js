@@ -104,7 +104,7 @@ uniform float uStain;
 
 uniform vec3 uColor;
 uniform vec3 uColor2;      // a second pigment the wash drifts toward
-uniform float uLine, uCrease, uGran, uWater, uTurb, uLit, uFogAmt;
+uniform float uLine, uCrease, uGran, uWater, uTurb, uLit, uFogAmt, uFogFloor;
 uniform vec3 uEmit;
 uniform sampler2D uMap;    // painted texture (paint.js canvas), multiplies the wash
 uniform float uMapAmt;
@@ -186,7 +186,7 @@ void main() {
   float dist = length(vWorld - cameraPosition);
   float fog = 1.0 - exp(-max(dist - uFogNear, 0.0) * uFogDensity);
   fog *= mix(1.0, exp(-max(vWorld.y, 0.0) / uFogHeight), 0.6);
-  fog = clamp(fog * uFogAmt, 0.0, 1.0);
+  fog = clamp(max(fog * uFogAmt, uFogFloor), 0.0, 1.0);
 
   vec4 ink = vec4(0.0);
   if (uInkAmt > 0.0) { ink = texture(uInkMap, vUv); ink.a *= uInkAmt; }
@@ -211,6 +211,8 @@ const col3 = (c) => (c instanceof THREE.Color ? c : new THREE.Color(c));
 //   line, crease    ink weight at silhouettes / inner creases (0..1)
 //   gran, turb      granulation and turbulence strength
 //   water           1 for the sea (the composite ripples it)
+//   fog, fogFloor   how much the haar takes it, and a least amount it always takes (something seen
+//                   only through mist)
 //   lit             0 = unlit (sky, paper), 1 = shaded
 //   emit            emissive colour into the light layer
 //   map, mapAmt     painted CanvasTexture multiplying the wash
@@ -237,6 +239,7 @@ export function wash(o = {}) {
       uTurb: { value: o.turb ?? 1 },
       uLit: { value: o.lit ?? 1 },
       uFogAmt: { value: o.fog ?? 1 },
+      uFogFloor: { value: o.fogFloor ?? 0 },
       uEmit: { value: col3(o.emit ?? 0x000000) },
       uMap: { value: o.map || WHITE },
       uMapAmt: { value: o.map ? (o.mapAmt ?? 1) : 0 },
@@ -262,11 +265,12 @@ layout(location = 2) out vec4 oLight;
 layout(location = 3) out vec4 oMask;
 in vec2 vUv;
 in vec3 vWorld;
+in vec3 vCol;
 uniform vec3 uEmit;
 uniform float uAmt;
 uniform sampler2D uMap;
 void main() {
-  vec3 e = uEmit * texture(uMap, vUv).rgb * uAmt;
+  vec3 e = uEmit * texture(uMap, vUv).rgb * uAmt * vCol;
   // premultiplied blending with alpha 0: adds to light, leaves the other layers untouched
   oPaint = vec4(0.0);
   oInk = vec4(0.0);
@@ -277,15 +281,23 @@ void main() {
 const LIGHT_VERT = /* glsl */`
 out vec2 vUv;
 out vec3 vWorld;
+out vec3 vCol;
 void main() {
   vUv = uv;
+  #ifdef USE_COLOR
+    vCol = color;
+  #else
+    vCol = vec3(1.0);
+  #endif
   vec4 wp = modelMatrix * vec4(position, 1.0);
   vWorld = wp.xyz;
   gl_Position = projectionMatrix * viewMatrix * wp;
 }`;
 
+// emit, amt, map; vcolor: the geometry's 'color' attribute scales it per vertex
 export function glowMaterial(o = {}) {
   return new THREE.ShaderMaterial({
+    vertexColors: !!o.vcolor,
     glslVersion: THREE.GLSL3,
     vertexShader: LIGHT_VERT,
     fragmentShader: LIGHT_FRAG,
@@ -293,6 +305,75 @@ export function glowMaterial(o = {}) {
       uEmit: { value: col3(o.emit ?? 0xffe0a0) },
       uAmt: { value: o.amt ?? 1 },
       uMap: { value: o.map || WHITE },
+    },
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.CustomBlending,
+    blendEquation: THREE.AddEquation,
+    blendSrc: THREE.OneFactor,
+    blendDst: THREE.OneMinusSrcAlphaFactor,
+    blendSrcAlpha: THREE.OneFactor,
+    blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
+    side: THREE.DoubleSide,
+  });
+}
+
+// The lamp's beam: a long cone of light that only adds to the light layer. Brightest where the view
+// passes through the most of it (face-on to the surface), fading along its length, with slow motes.
+const BEAM_VERT = /* glsl */`
+out vec3 vWorld;
+out vec3 vN;
+out float vAlong;
+out vec3 vAxis;
+uniform float uLen;
+void main() {
+  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vWorld = wp.xyz;
+  vN = normalize(mat3(modelMatrix) * normal);
+  vAxis = normalize(mat3(modelMatrix) * vec3(0.0, 0.0, -1.0));
+  vAlong = clamp(-position.z / uLen, 0.0, 1.0);
+  gl_Position = projectionMatrix * viewMatrix * wp;
+}`;
+const BEAM_FRAG = /* glsl */`
+precision highp float;
+layout(location = 0) out vec4 oPaint;
+layout(location = 1) out vec4 oInk;
+layout(location = 2) out vec4 oLight;
+layout(location = 3) out vec4 oMask;
+in vec3 vWorld;
+in vec3 vN;
+in float vAlong;
+in vec3 vAxis;
+uniform vec3 uEmit;
+uniform float uAmt, uReach, uTime;
+${NOISE_GLSL}
+void main() {
+  vec3 V = normalize(cameraPosition - vWorld);
+  float face = abs(dot(normalize(vN), V));
+  // seen from the side the shaft is brightest down its middle; seen from behind the lamp, looking
+  // along it, every surface is grazing, so the glow comes from looking down its length instead
+  float down = abs(dot(V, normalize(vAxis)));
+  float fall = exp(-vAlong / max(uReach, 0.02) * 2.2) * smoothstep(0.0, 0.015, vAlong);
+  float thick = max(pow(face, 1.6), pow(down, 3.0) * 0.45 * smoothstep(0.0, 0.02, face) * smoothstep(0.01, 0.1, vAlong));
+  float motes = 0.75 + 0.5 * vn3(vWorld * 0.05 + vec3(0.0, uTime * 0.2, uTime * 0.1));
+  vec3 e = uEmit * uAmt * thick * fall * motes;
+  oPaint = vec4(0.0);
+  oInk = vec4(0.0);
+  oLight = vec4(e, 0.0);
+  oMask = vec4(0.0);
+}`;
+
+export function beamMaterial(o = {}) {
+  return new THREE.ShaderMaterial({
+    glslVersion: THREE.GLSL3,
+    vertexShader: BEAM_VERT,
+    fragmentShader: BEAM_FRAG,
+    uniforms: {
+      uEmit: { value: col3(o.emit ?? 0xffe2a8) },
+      uAmt: { value: o.amt ?? 1 },
+      uReach: { value: o.reach ?? 1 },
+      uLen: { value: o.len ?? 1 },
+      uTime: SHARED.uTime,
     },
     transparent: true,
     depthWrite: false,

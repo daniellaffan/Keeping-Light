@@ -13,7 +13,7 @@ export const ROOM = {
   R: 3.4,              // inner radius
   H: 3.3,              // ceiling
   wall: 0.6,
-  window: { deg: 0, half: 0.56, sill: 0.82, top: 2.15 },
+  window: { deg: 0, half: 0.78, sill: 0.82, top: 2.15 },
   door: { deg: 100, half: 0.48, top: 2.05 },
   stairs: { from: 135, step: 12, rise: 0.22, count: 14, r0: 2.3 },
   table: { deg: 330, r: 2.9, w: 1.34, d: 0.76, h: 0.76 },
@@ -99,7 +99,8 @@ export function buildRoom() {
   b.add(new THREE.BoxGeometry(w.half * 2, 0.07, 0.08), M.pine, { pos: [fx, w.top - 0.035, fz], rot: frameRot });
   b.add(new THREE.BoxGeometry(w.half * 2, 0.08, 0.1), M.pine, { pos: [fx, w.sill + 0.04, fz], rot: frameRot });
   b.add(new THREE.BoxGeometry(0.035, fh, 0.04), M.pine, { pos: [fx, fy, fz], rot: frameRot });
-  for (const k of [1 / 3, 2 / 3]) b.add(new THREE.BoxGeometry(w.half * 2, 0.03, 0.04), M.pine, { pos: [fx, w.sill + fh * k, fz], rot: frameRot });
+  // one transom, above the eye of someone sitting, so the horizon runs clear across the panes
+  for (const k of [0.6]) b.add(new THREE.BoxGeometry(w.half * 2, 0.03, 0.04), M.pine, { pos: [fx, w.sill + fh * k, fz], rot: frameRot });
 
   // door reveal and the door itself, shut
   reveal(b, M.stone, d.deg, d.half, 0, d.top);
@@ -281,18 +282,25 @@ export function buildRoom() {
   const mug = new THREE.Group();
   const mb = new Builder(41);
   mb.add(new THREE.CylinderGeometry(0.042, 0.038, 0.095, 18, 1, true), wash({ color: '#D9CDB4', color2: '#CBBB9C', line: 1, gran: 0.3, side: THREE.DoubleSide }), { pos: [0, 0.0475, 0] });
-  mb.cyl(wash({ color: '#5A3A22', line: 0.2, gran: 0.4 }), 0.038, 0.038, 0.004, [0, 0.08, 0], { seg: 16 });
+  mb.cyl(wash({ color: '#D9CDB4', line: 0.6, gran: 0.3 }), 0.038, 0.038, 0.006, [0, 0.003, 0], { seg: 16 });
   mb.add(new THREE.TorusGeometry(0.025, 0.008, 6, 12, Math.PI), wash({ color: '#D9CDB4', line: 1, gran: 0.3 }), { pos: [0.045, 0.05, 0], rot: [0, 0, -Math.PI / 2] });
   mug.add(mb.finish('mug'));
+  // the tea, which goes down through the night
+  const tea = new THREE.Mesh(new THREE.CircleGeometry(0.039, 16).rotateX(-Math.PI / 2), wash({ color: '#5A3A22', color2: '#4A2E1A', line: 0.2, crease: 0, gran: 0.4 }));
+  tea.position.y = 0.08;
+  mug.add(tea);
+  mug.userData.tea = tea;
   const [mx, mz] = polar(w.deg - 6, R + 0.1);
   mug.position.set(mx, w.sill + 0.05, mz);
   mug.userData.home = mug.position.clone();
 
+  const sill = buildSill(M, w);
+
   const group = new THREE.Group();
   group.name = 'watchroom';
-  group.add(b.finish('room'), sb.finish('shelves'), table, control, clock, stove, chair, mug);
+  group.add(b.finish('room'), sb.finish('shelves'), table, control, clock, stove, chair, mug, sill.group);
   return {
-    group, table, lamp, flame, halo, clock, hourHand, minHand, lever: pivot, stove, stoveGlow, chair, mug, M,
+    group, table, lamp, flame, halo, clock, hourHand, minHand, lever: pivot, stove, stoveGlow, chair, mug, M, sill,
     // 2D obstacles for walking, in room space: circles [x, z, r] and the stair annulus
     obstacles: {
       circles: [[vx, vz, 0.55], [cxx, czz, 0.5]],
@@ -342,7 +350,66 @@ function offset(x, z, deg, off, y) {
   return [x + Math.cos(a) * off, y, z + Math.sin(a) * off];
 }
 
-function clockFaceTex() {
+// On the windowsill, to keep the night by: a carriage clock, a little paraffin lamp whose oil goes
+// down, and a folded note to oneself (click it to let the night run on, or be slow).
+function buildSill(M, w) {
+  const top = w.sill + 0.05;
+  const group = new THREE.Group();
+  const at = (deg, r, y = top) => { const [x, z] = polar(deg, r); return new THREE.Vector3(x, y, z); };
+  // carriage clock, facing the chair
+  const clock = new THREE.Group();
+  const cb = new Builder(43);
+  cb.box(M.brass, 0.1, 0.12, 0.07, [0, 0.06, 0]);
+  cb.box(M.brass, 0.11, 0.012, 0.08, [0, 0.126, 0]);
+  cb.add(new THREE.TorusGeometry(0.03, 0.004, 6, 14, Math.PI), M.brass, { pos: [0, 0.132, 0], wonk: 0 });
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) cb.add(new THREE.SphereGeometry(0.008, 6, 4), M.brass, { pos: [sx * 0.045, 0.004, sz * 0.03], wonk: 0 });
+  const face = wash({ color: '#F1E9D6', color2: '#E8DDC6', line: 0.6, crease: 0.2, gran: 0.25, inkMap: clockFaceTex(), noiseScale: 30 });
+  cb.add(new THREE.CircleGeometry(0.036, 24), face, { pos: [0, 0.066, 0.0355], wonk: 0 });
+  clock.add(cb.finish('sillclock'));
+  const handM = wash({ color: '#2B2622', line: 0.6, crease: 0, gran: 0 });
+  const hour = new THREE.Mesh(new THREE.BoxGeometry(0.004, 0.02, 0.001).translate(0, 0.008, 0), handM);
+  const min = new THREE.Mesh(new THREE.BoxGeometry(0.0028, 0.03, 0.001).translate(0, 0.013, 0), handM);
+  hour.position.set(0, 0.066, 0.037); min.position.set(0, 0.066, 0.038);
+  clock.add(hour, min);
+  clock.position.copy(at(w.deg + 8.5, ROOM.R + 0.02));
+  clock.rotation.y = facing(w.deg + 8.5) - 0.25;
+  // paraffin lamp: brass foot, a glass font with the oil in it, a chimney, a small flame
+  const lamp = new THREE.Group();
+  const lb = new Builder(47);
+  lb.cyl(M.brass, 0.035, 0.045, 0.018, [0, 0.009, 0], { seg: 16 });
+  lb.add(new THREE.LatheGeometry([0.02, 0.04, 0.046, 0.042, 0.02, 0.014].map((r, i) => new THREE.Vector2(r, 0.018 + i * 0.016)), 16), M.glass, { wonk: 0 });
+  lb.cyl(M.brass, 0.018, 0.02, 0.014, [0, 0.106, 0], { seg: 12 });
+  lb.add(new THREE.LatheGeometry([0.016, 0.018, 0.026, 0.024, 0.014, 0.013].map((r, i) => new THREE.Vector2(r, i * 0.02)), 14), M.glass, { pos: [0, 0.113, 0], wonk: 0 });
+  lamp.add(lb.finish('silllamp'));
+  const oil = new THREE.Mesh(new THREE.CylinderGeometry(0.038, 0.034, 1, 14).translate(0, 0.5, 0), wash({ color: '#C08E3E', color2: '#A87A30', line: 0.3, crease: 0, gran: 0.3 }));
+  oil.position.y = 0.02;
+  oil.scale.y = 0.05;
+  const flame = new THREE.Mesh(new THREE.SphereGeometry(0.006, 8, 6), glowMaterial({ emit: 0xffc070, amt: 1.6 }));
+  flame.position.y = 0.128; flame.scale.set(1, 2, 1);
+  const glow = new THREE.Mesh(new THREE.SphereGeometry(0.03, 10, 8), glowMaterial({ emit: 0xd08a40, amt: 0.25 }));
+  glow.position.y = 0.13;
+  lamp.add(oil, flame, glow);
+  lamp.position.copy(at(w.deg - 10.5, ROOM.R + 0.14));
+  // the note: a card folded into a little tent, written on the side facing the chair
+  const noteCanvas = document.createElement('canvas');
+  noteCanvas.width = 320; noteCanvas.height = 160;
+  const noteTex = new THREE.CanvasTexture(noteCanvas);
+  noteTex.colorSpace = THREE.NoColorSpace;
+  noteTex.anisotropy = 4;
+  const paper = wash({ color: '#F2EAD6', color2: '#EAE0C8', line: 0.8, crease: 0.5, gran: 0.3, inkMap: noteTex, noiseScale: 20, side: THREE.DoubleSide });
+  const note = new THREE.Group();
+  const face1 = new THREE.Mesh(new THREE.PlaneGeometry(0.15, 0.075), paper);
+  face1.position.set(0, 0.035, 0.012); face1.rotation.x = -0.33;
+  const back = new THREE.Mesh(new THREE.PlaneGeometry(0.15, 0.075), wash({ color: '#EAE0C8', line: 0.8, crease: 0.5, gran: 0.3, side: THREE.DoubleSide }));
+  back.position.set(0, 0.035, -0.012); back.rotation.x = 0.33;
+  note.add(face1, back);
+  note.position.copy(at(w.deg + 2.5, ROOM.R - 0.08));
+  note.rotation.y = facing(w.deg + 2.5) + 0.12;
+  group.add(clock, lamp, note);
+  return { group, clock, hour, min, lamp, oil, flame, glow, note, noteFace: face1, noteCanvas, noteTex };
+}
+
+export function clockFaceTex() {
   return letteringTex('clockface', 256, 256, (ctx, w, h) => {
     ctx.translate(w / 2, h / 2);
     const nums = ['XII', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI'];
