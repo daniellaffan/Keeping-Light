@@ -295,43 +295,52 @@ const hand = (base, extra) => ({ ...base, ...extra, fingers: { ...base.fingers, 
 export const POSES = {
   // walking: hands low at the sides, barely in view; they swing with the pace
   walk: {
-    R: hand(RELAX, { frame: 'body', pos: [0.24, -0.66, -0.3], rot: [0.75, 0.1, -1.35], swing: 1 }),
-    L: hand(RELAX, { frame: 'body', pos: [-0.24, -0.66, -0.3], rot: [0.75, -0.1, 1.35], swing: -1 }),
+    R: hand(RELAX, { frame: 'body', pos: [0.24, -0.66, -0.3], align: [1, 0.1, 0.3], swing: 1 }),
+    L: hand(RELAX, { frame: 'body', pos: [-0.24, -0.66, -0.3], align: [-1, 0.1, 0.3], swing: -1 }),
   },
   // reaching for the door's iron ring
   door: {
     R: hand(GRIP, { frame: 'door', pos: [0, -0.01, 0.05], rot: [0.0, 0.0, -1.45], thumb: [0.7, 0.0, 0.5, 0.5, 0.4] }),
-    L: hand(RELAX, { frame: 'body', pos: [-0.24, -0.72, -0.12], rot: [0.9, 0.0, 1.35] }),
+    L: hand(RELAX, { frame: 'body', pos: [-0.24, -0.72, -0.12], align: [-1, 0.1, 0.3] }),
   },
-  // leaning over the book, hands on its lower corners keeping the pages down
+  // leaning over the book: both hands flat on the table either side of it, never on the pages; the
+  // finger tips at most on the leather beyond them
   lean: {
-    R: hand(FLAT, { frame: 'book', pos: [0.3, 0.05, 0.2], rot: [-0.04, 0.5, 0.04] }),
-    L: hand(FLAT, { frame: 'book', pos: [-0.3, 0.05, 0.2], rot: [-0.04, -0.5, -0.04] }),
+    R: hand(FLAT, { frame: 'book', pos: [0.405, 0.024, 0.12], rot: [0.0, 0.32, 0.03] }),
+    L: hand(FLAT, { frame: 'book', pos: [-0.405, 0.024, 0.12], rot: [0.0, 0.05, -0.03] }),
   },
-  // writing: the pencil tip is placed by IK under the cursor; the left hand holds the page flat
-  write: {
-    R: hand(TRIPOD, { frame: 'book', tip: true, hold: 'pencil', rot: [-0.08, 0.42, -0.55],
+  // ready to write: the same, the pencil lying in the right hand, which rests on its little-finger side
+  ready: {
+    R: hand(TRIPOD, { frame: 'book', pos: [0.41, 0.038, 0.13], rot: [0.0, 0.42, -0.62], hold: 'pencil',
       fingers: { index: [0, 0.47, 0.52, 0.47], middle: [-0.05, 0.43, 0.86, 0.2] }, thumb: [0.46, -0.43, 0.52, 0.05, -0.6] }),
-    L: hand(FLAT, { frame: 'book', pos: [-0.2, 0.052, 0.16], rot: [-0.04, -0.25, -0.04] }),
+    L: hand(FLAT, { frame: 'book', pos: [-0.405, 0.024, 0.12], rot: [0.0, 0.05, -0.03] }),
+  },
+  // writing: the pencil tip is placed by IK under the cursor, the hand trailing behind it to the lower
+  // right; the left hand stays where it was, beside the book
+  write: {
+    R: hand(TRIPOD, { frame: 'book', tip: true, hold: 'pencil', rot: [-0.08, 0.52, -0.55],
+      fingers: { index: [0, 0.47, 0.52, 0.47], middle: [-0.05, 0.43, 0.86, 0.2] }, thumb: [0.46, -0.43, 0.52, 0.05, -0.6] }),
+    L: hand(FLAT, { frame: 'book', pos: [-0.405, 0.024, 0.12], rot: [0.0, 0.05, -0.03] }),
   },
   // the dip pen: held a little more upright, the same left hand
   pen: {
     R: hand(TRIPOD, { frame: 'book', tip: true, hold: 'pen', rot: [0.02, 0.38, -0.5],
       fingers: { index: [0, 0.48, 0.52, 0.06], middle: [-0.05, 0.5, 0.76, -0.14] }, thumb: [0.46, -0.42, 0.8, 0.05, -0.6] }),
-    L: hand(FLAT, { frame: 'book', pos: [-0.2, 0.052, 0.16], rot: [-0.04, -0.25, -0.04] }),
+    L: hand(FLAT, { frame: 'book', pos: [-0.405, 0.024, 0.12], rot: [0.0, 0.05, -0.03] }),
   },
   // turning a page: the right hand's fingers slip under the near corner and lift it; the leaf goes over
   // on its own while the hand stays low, ready for the next
   turn: {
     R: hand(PINCH, { frame: 'book', pos: [0.31, 0.06, 0.2], rot: [0.25, 0.85, -0.25],
       fingers: { index: [0.02, 0.2, 0.25, 0.15], middle: [0, 0.3, 0.35, 0.2], ring: [0.02, 0.45, 0.5, 0.3], little: [0.06, 0.55, 0.6, 0.35] }, thumb: [0.45, 0.35, 0.3, 0.1, 0.05] }),
-    L: hand(FLAT, { frame: 'book', pos: [-0.3, 0.05, 0.2], rot: [-0.04, -0.5, -0.04] }),
+    L: hand(FLAT, { frame: 'book', pos: [-0.405, 0.024, 0.12], rot: [0.0, 0.05, -0.03] }),
   },
-  // closing the book at dawn: the left hand under the cover's edge, palm up, bringing it over
+  // closing the book at dawn: the left hand pinches the cover's edge (thumb on top) and lifts it until
+  // it stands up; then lets it fall shut and goes back beside the book (the keeper decides when)
   close: {
-    R: hand(FLAT, { frame: 'book', pos: [0.3, 0.05, 0.2], rot: [-0.04, 0.5, 0.04] }),
-    L: hand(FLAT, { frame: 'lid', pos: [0.02, -0.045, -0.05], rot: [-0.3, -1.57, 3.14],
-      fingers: { index: [0.03, 0.02, 0.05, 0.02], middle: [0, 0.02, 0.05, 0.02], ring: [0.03, 0.04, 0.06, 0.03], little: [0.08, 0.06, 0.08, 0.04] } }),
+    R: hand(FLAT, { frame: 'book', pos: [0.405, 0.024, 0.12], rot: [0.0, 0.32, 0.03] }),
+    L: hand(FLAT, { frame: 'lid', pos: [-0.031, -0.006, 0.0], at: [0.004, -0.012, -0.165], rot: [-0.1, -0.22, -0.7],
+      fingers: { index: [0.04, 0.3, 0.35, 0.2], middle: [0, 0.32, 0.38, 0.22], ring: [0.04, 0.36, 0.4, 0.24], little: [0.1, 0.4, 0.44, 0.26] }, thumb: [0.1, 0.15, 0.1, 0.15, 0.2] }),
   },
   // in the chair: forearms along the arms, hands loose over the ends
   chair: {
@@ -345,18 +354,19 @@ export const POSES = {
   },
   // pulling the lamp control's lever down
   lamp: {
-    R: hand(GRIP, { frame: 'lever', pos: [0.05, 0.035, 0.0], rot: [0.0, 1.57, 0.0] }),
-    L: hand(RELAX, { frame: 'body', pos: [-0.24, -0.7, -0.14], rot: [0.9, 0.0, 1.35] }),
+    R: hand(CUP, { frame: 'lever', pos: [0.0, 0.036, -0.06], at: [0.0, -0.018, -0.058], rot: [-0.05, 3.99, 1.05],
+      fingers: { index: [0.06, 0.7, 0.75, 0.45], middle: [0, 0.72, 0.8, 0.45], ring: [0.04, 0.75, 0.82, 0.45], little: [0.1, 0.8, 0.85, 0.45] }, thumb: [0.35, 0.3, 0.3, 0.3, 0.35] }),
+    L: hand(RELAX, { frame: 'body', pos: [-0.24, -0.7, -0.14], align: [-1, 0.1, 0.3] }),
   },
   // climbing: the right hand slides up the rail, the left steadies against the wall
   rail: {
     R: hand(GRIP, { frame: 'rail', pos: [0.0, 0.02, 0.0], rot: [0.1, 0.0, -0.2], fingers: { index: [0, 0.9, 1.0, 0.55], middle: [0, 1.0, 1.1, 0.6] } }),
-    L: hand(RELAX, { frame: 'body', pos: [-0.24, -0.7, -0.1], rot: [0.9, 0.0, 1.35] }),
+    L: hand(RELAX, { frame: 'body', pos: [-0.24, -0.7, -0.1], align: [-1, 0.1, 0.3] }),
   },
   // debug only (the hands review's studio): held up before the face, fingers at ease
   show: {
     R: hand(RELAX, { frame: 'body', pos: [0.1, -0.12, -0.36], rot: [0.5, 0.25, 0.1] }),
-    L: hand(RELAX, { frame: 'body', pos: [-0.24, -0.7, -0.14], rot: [0.9, 0.0, 1.35] }),
+    L: hand(RELAX, { frame: 'body', pos: [-0.24, -0.7, -0.14], align: [-1, 0.1, 0.3] }),
   },
 };
 export const POSE_NAMES = Object.keys(POSES);
@@ -412,10 +422,22 @@ export class Hands {
   setStain(k) { this.mats.flesh.uniforms.uStain.value = k; }
 
   // resolve a hand's pose into a world wrist target and finger values
-  resolve(p, side, frames) {
+  resolve(p, side, frames, S = null, pole = null) {
     const F = frames[p.frame] || frames.body;
-    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(p.rot[0], p.rot[1], p.rot[2], 'YXZ'));
-    const wq = F.quat.clone().multiply(q);
+    let wq;
+    if (p.align && S) {
+      // a hand that hangs: it carries on from the forearm (a little curled toward the palm), its back
+      // turned the way `align` says
+      const T = new THREE.Vector3(...p.pos).applyQuaternion(F.quat).add(F.pos);
+      const E = elbowAt(S, T, pole);
+      const fd = T.clone().sub(E).normalize();
+      const back = new THREE.Vector3(...p.align).applyQuaternion(F.quat);
+      back.addScaledVector(fd, -back.dot(fd)).normalize();
+      wq = basisQuat(fd.addScaledVector(back, -0.2).normalize(), back);
+    } else {
+      const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(p.rot[0], p.rot[1], p.rot[2], 'YXZ'));
+      wq = F.quat.clone().multiply(q);
+    }
     let pos;
     if (p.tip && this.tip) {
       // the tool's working tip goes to the target; the wrist sits wherever that puts it
@@ -426,8 +448,11 @@ export class Hands {
       void tool;
     } else {
       pos = new THREE.Vector3(...p.pos).applyQuaternion(F.quat).add(F.pos);
+      // `at`: a point of the hand (wrist space) that goes to `pos`, rather than the wrist itself
+      if (p.at) pos.sub(new THREE.Vector3(...p.at).applyQuaternion(wq));
     }
-    return { pos, quat: wq, fingers: p.fingers, thumb: p.thumb, hold: p.hold, swing: p.swing || 0 };
+    // a hanging hand follows its arm; any other leads it (the elbow goes where suits the hand)
+    return { pos, quat: wq, fingers: p.fingers, thumb: p.thumb, hold: p.hold, swing: p.swing || 0, lead: p.align ? 0 : 1 };
   }
 
   // frames: { body: {pos, quat}, book: {...}, ... }; shoulders: { R: Vector3, L: Vector3 } world; pole dirs
@@ -437,7 +462,7 @@ export class Hands {
     const e = this.blend * this.blend * (3 - 2 * this.blend);
     const cur = {};
     for (const s of ['R', 'L']) {
-      const now = this.resolve(POSES[this.pose][s], s, frames);
+      const now = this.resolve(POSES[this.pose][s], s, frames, shoulders[s], poles[s]);
       let t = now;
       if (this.from && e < 1) {
         const a = this.from[s];
@@ -448,11 +473,33 @@ export class Hands {
           thumb: a.thumb.map((v, i) => lerp(v, now.thumb[i], e)),
           hold: e > 0.5 ? now.hold : a.hold,
           swing: lerp(a.swing, now.swing, e),
+          lead: lerp(a.lead ?? 1, now.lead, e),
         };
       }
       cur[s] = t;
     }
     this.snapshot = cur;
+    // the arms ride with the body: whatever it did since last frame (stepped, turned, stood up), the
+    // hands are carried along, and only their movement relative to it is eased
+    const body = frames.body;
+    // a cut (the camera carried somewhere else at once): the hands are simply where they belong
+    if (this.lastBody && (body.pos.distanceTo(this.lastBody.pos) > 0.5 || body.quat.angleTo(this.lastBody.quat) > 1.0)) {
+      this.lastBody = null; this.from = null; this.blend = 1;
+      this.spring = { R: null, L: null };
+      for (const a of [this.R, this.L]) { a.pp = null; a.roll = null; }
+      for (const s of ['R', 'L']) cur[s] = this.resolve(POSES[this.pose][s], s, frames, shoulders[s], poles[s]);
+    }
+    if (this.lastBody) {
+      const turn = body.quat.clone().multiply(this.lastBody.quat.clone().invert());
+      for (const s of ['R', 'L']) {
+        const sp = this.spring[s];
+        if (!sp) continue;
+        sp.pos.sub(this.lastBody.pos).applyQuaternion(turn).add(body.pos);
+        sp.vel.applyQuaternion(turn);
+        this[s].pp?.applyQuaternion(turn);
+      }
+    }
+    this.lastBody = { pos: body.pos.clone(), quat: body.quat.clone() };
 
     for (const s of ['R', 'L']) {
       const arm = this[s], t = cur[s];
@@ -464,15 +511,18 @@ export class Hands {
       let sp = this.spring[s];
       if (!sp || sp.pos.distanceTo(tgt) > 0.6) sp = this.spring[s] = { pos: tgt.clone(), vel: new THREE.Vector3() };
       follow(sp, tgt, POSES[this.pose][s].tip ? 34 : 11, dt);
-      this.solve(arm, shoulders[s], sp.pos, t.quat, poles[s]);
+      this.solve(arm, shoulders[s], sp.pos, t.quat, poles[s], dt, t.lead ?? 1);
       this.fingers(arm, t);
       for (const [name, obj] of Object.entries(arm.held)) obj.visible = t.hold === name && this.visible;
     }
     this.R.root.visible = this.L.root.visible = this.visible;
   }
 
-  // two-bone IK: shoulder S, wrist target T, elbow toward the pole; the roll shared out down the forearm
-  solve(arm, S, T, wq, pole) {
+  // Two-bone IK: shoulder S, wrist target T. Of all the places the elbow could go, it goes where the
+  // forearm meets the hand the way a wrist likes (cocked back a little, in line with the hand), leaning
+  // toward the body's own pole only to break ties; then whatever bend the wrist is still asked for is
+  // held inside what a wrist can do. The forearm's roll is shared out down its length.
+  solve(arm, S, T, wq, pole, dt = 1 / 60, lead = 1) {
     const B = arm.B;
     const ST = T.clone().sub(S);
     let d = ST.length();
@@ -483,33 +533,63 @@ export class Hands {
     const dir = T.clone().sub(S).normalize();
     const a = (UPPER * UPPER - FORE * FORE + d * d) / (2 * d);
     const h = Math.sqrt(Math.max(0, UPPER * UPPER - a * a));
-    const pp = pole.clone().addScaledVector(dir, -pole.dot(dir)).normalize();
+    // where the elbow would be if the forearm left the wrist straight back from the hand
+    const want = new THREE.Vector3(0, 0.32, 1).normalize().applyQuaternion(wq).multiplyScalar(FORE).add(T).sub(S);
+    const wp = want.addScaledVector(dir, -want.dot(dir));
+    const bp = pole.clone().addScaledVector(dir, -pole.dot(dir)).normalize();
+    // (how far off the line the natural elbow is decides how much it counts: an arm near its full
+    // reach has no preference, and leaves it to the body's own)
+    const pp = wp.multiplyScalar(lead / FORE).addScaledVector(bp, 0.45);
+    if (pp.lengthSq() < 1e-8) pp.copy(bp);
+    // never with the elbow up above the shoulder's line or swung in across the chest
+    pp.normalize();
+    if (pp.dot(bp) < -0.2) pp.addScaledVector(bp, -0.2 - pp.dot(bp)).normalize();
+    // the elbow swings round to where it's going at an old man's pace, never jumping across
+    if (arm.pp) {
+      const prev = arm.pp.clone().addScaledVector(dir, -arm.pp.dot(dir));
+      if (prev.lengthSq() > 1e-8) {
+        prev.normalize();
+        const ang = Math.atan2(prev.clone().cross(pp).dot(dir), prev.dot(pp));
+        const step = Math.max(-dt * 5, Math.min(dt * 5, ang));
+        pp.copy(prev.applyAxisAngle(dir, step));
+      }
+    }
+    arm.pp = pp.clone();
     const E = S.clone().addScaledVector(dir, a).addScaledVector(pp, h);
     const fd = T.clone().sub(E).normalize();
 
-    // the hand's back, and the forearm's natural back (away from the elbow's pole)
-    const hd = new THREE.Vector3(0, 1, 0).applyQuaternion(wq);
-    const hdp = hd.clone().addScaledVector(fd, -hd.dot(fd));
-    const n0 = pp.clone().negate().addScaledVector(fd, -(-pp.dot(fd)));
-    if (n0.lengthSq() < 1e-6) n0.set(0, 1, 0);
+    // the forearm at its neutral turn (thumb up) has the back of the hand along the elbow's hinge,
+    // facing out; the hand's turn from there (pronation one way, supination the other, each about a
+    // right angle) is one angle, carried on from last frame's (no wrapping round from +180° to −180°),
+    // kept within what a forearm can turn, and shared out down its length
+    const n0 = pp.clone().cross(fd).multiplyScalar(arm.side);
+    if (n0.lengthSq() < 1e-6) n0.set(arm.side, 0, 0);
     n0.normalize();
-    let up = n0.clone();
-    if (hdp.lengthSq() > 1e-6) { hdp.normalize(); up = n0.clone().add(hdp); if (up.lengthSq() < 1e-4) up = n0.clone(); up.normalize(); }
+    const hd = _w.set(0, 1, 0).applyQuaternion(wq);
+    const hdp = hd.addScaledVector(fd, -hd.dot(fd));
+    let roll = arm.roll ?? 0;
+    if (hdp.lengthSq() > 1e-6) {
+      hdp.normalize();
+      const r = Math.atan2(n0.clone().cross(hdp).dot(fd) * -1, n0.dot(hdp));
+      roll = arm.roll == null ? r : arm.roll + Math.max(-dt * 7, Math.min(dt * 7, Math.atan2(Math.sin(r - arm.roll), Math.cos(r - arm.roll))));
+    }
+    roll = Math.max(-1.75, Math.min(1.75, roll));
+    arm.roll = roll;
 
     // upper arm: -Z along S→E, its back roughly up
     const ud = E.clone().sub(S).normalize();
     const shoulderQ = basisQuat(ud, n0);
     B.shoulder.position.copy(S);
     B.shoulder.quaternion.copy(shoulderQ);
-    const elbowQ = basisQuat(fd, up);
+    const elbowQ = basisQuat(fd, n0).multiply(_t.setFromAxisAngle(_Z, roll * 0.4));
     B.elbow.quaternion.copy(shoulderQ.clone().invert().multiply(elbowQ));
-    // half the remaining roll in the twist bone, the rest at the wrist
-    let roll = 0;
-    if (hdp.lengthSq() > 1e-6) roll = Math.atan2(up.clone().cross(hdp).dot(fd.clone().negate()), up.dot(hdp));
-    const twistL = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), roll * 0.5);
+    const twistL = new THREE.Quaternion().setFromAxisAngle(_Z, roll * 0.35);
     B.twist.quaternion.copy(twistL);
     const twistW = elbowQ.clone().multiply(twistL);
-    B.wrist.quaternion.copy(twistW.invert().multiply(wq));
+    const rel = twistW.invert().multiply(wq);
+    B.wrist.quaternion.copy(clampWrist(rel, arm.side));
+    arm.report = { roll, rel, elbow: E };
+    return rel;
   }
 
   fingers(arm, t) {
@@ -536,6 +616,35 @@ export class Hands {
   }
 }
 
+// A wrist bends back about 55°, forward about 65°, and side to side about 20° toward the thumb and
+// 30° toward the little finger; its own twist is the forearm's business. Anything past that is pulled
+// back inside (q: the hand relative to the end of the forearm).
+const _w = new THREE.Vector3(), _Z = new THREE.Vector3(0, 0, 1), _t = new THREE.Quaternion();
+const WRIST = { ext: 55 * Math.PI / 180, flex: 65 * Math.PI / 180, radial: 20 * Math.PI / 180, ulnar: 30 * Math.PI / 180 };
+function clampWrist(q, side) {
+  // q = swing · twist, the twist about the forearm's axis (local Z). The wrist itself hardly twists:
+  // what the forearm hasn't turned is mostly left undone.
+  const twist = new THREE.Quaternion(0, 0, q.z, q.w).normalize();
+  if (twist.w < 0) twist.set(0, 0, -twist.z, -twist.w);
+  const tw = 2 * Math.atan2(twist.z, twist.w), TW = 0.7;
+  const swing = q.clone().multiply(twist.clone().invert());
+  if (Math.abs(tw) > TW) twist.setFromAxisAngle(_Z, Math.sign(tw) * TW);
+  // the swing's bend, measured as (back, toward the thumb), held inside an elliptical cone of the
+  // wrist's limits: continuous, so a reach past them slides along the edge instead of flipping
+  if (swing.w < 0) swing.set(-swing.x, -swing.y, -swing.z, -swing.w);
+  const sn = Math.sqrt(swing.x * swing.x + swing.y * swing.y);
+  if (sn > 1e-6) {
+    const ang = 2 * Math.atan2(sn, swing.w);
+    const e = ang * swing.x / sn, r = ang * swing.y / sn * side;
+    const k = Math.hypot(e / (e >= 0 ? WRIST.ext : WRIST.flex), r / (r >= 0 ? WRIST.radial : WRIST.ulnar));
+    if (k > 1) {
+      const e2 = e / k, r2 = r / k, a2 = Math.hypot(e2, r2);
+      swing.setFromAxisAngle(_w.set(e2 / a2, r2 * side / a2, 0), a2);
+    }
+  }
+  return swing.multiply(twist);
+}
+
 // critically damped follow at angular frequency w (exact for a target held still over dt)
 const _d = new THREE.Vector3(), _v = new THREE.Vector3();
 function follow(sp, target, w, dt) {
@@ -550,6 +659,16 @@ function mixFingers(a, b, e) {
   const o = {};
   for (const f of FNAMES) o[f] = a[f].map((v, i) => lerp(v, b[f][i], e));
   return o;
+}
+
+// the elbow for a shoulder S and wrist T, bent toward the pole
+function elbowAt(S, T, pole) {
+  const ST = T.clone().sub(S);
+  const d = Math.min(Math.max(ST.length(), Math.abs(UPPER - FORE) + 0.01), UPPER + FORE - 0.002);
+  const dir = ST.normalize();
+  const a = (UPPER * UPPER - FORE * FORE + d * d) / (2 * d), h = Math.sqrt(Math.max(0, UPPER * UPPER - a * a));
+  const pp = pole.clone().addScaledVector(dir, -pole.dot(dir)).normalize();
+  return S.clone().addScaledVector(dir, a).addScaledVector(pp, h);
 }
 
 // quaternion whose -Z points along `fwd` and whose +Y is as near `up` as it can be

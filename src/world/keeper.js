@@ -1133,20 +1133,27 @@ export class Keeper {
       case 'stairs': return 'rail';
       case 'lean-in': return 'lean';
       case 'lean':
-        if (sc.inking) return 'pen';
+        if (sc.inking) return this.inkPose();
         if (sc.flipAnim && !this.book.single) return 'turn';
-        return this.mode === 'dusk' ? 'write' : 'lean';
-      case 'lean-out': return sc.inking ? 'pen' : 'lean';
+        // the pencil comes onto the page only while it's drawing (and a moment after); otherwise the
+        // hands rest beside the book and leave every page clear
+        if (this.mode === 'dusk') return this.drawHold > 0 ? 'write' : 'ready';
+        return 'lean';
+      case 'lean-out': return sc.inking ? this.inkPose() : this.mode === 'dusk' ? 'ready' : 'lean';
       case 'light': return 'lamp';
       case 'to-chair': return 'walk';
       case 'chair': return this.sip && this.sip.t > 0.2 && this.sip.t < 4.0 ? 'mug' : 'chair';
       case 'dawn-chair': return 'chair';
       case 'rise': return 'walk';
-      case 'closing': return 'close';
+      // the cover is lifted until it stands, then let fall; the hand goes back beside the book
+      case 'closing': return this.st < 0.55 ? 'close' : 'lean';
       case 'review': return this.reviewPose;
       default: return 'lean';
     }
   }
+
+  // inking the plan (see the inking section)
+  inkPose() { return 'pen'; }
 
   frame(name) { return (this.frames[name] ||= { pos: new THREE.Vector3(), quat: new THREE.Quaternion(), fwd: new THREE.Vector3() }); }
 
@@ -1192,7 +1199,11 @@ export class Keeper {
   updateHands(dt) {
     const h = this.hands, b = this.book, sc = b.scene;
     const body = this.updateFrames();
-    h.setPose(this.handPose(), this.state === 'lean' ? 0.35 : 0.6);
+    // drawing: the button held down on the page; the hand lingers a moment after it lets go
+    if (this.state === 'lean' && this.pointerOnPage && b.input.down && this.mode === 'dusk' && !sc.inking) this.drawHold = 1.2;
+    else this.drawHold = Math.max(0, (this.drawHold || 0) - dt);
+    const pose = this.handPose();
+    h.setPose(pose, pose === 'write' || h.pose === 'write' ? 0.3 : this.state === 'lean' ? 0.45 : 0.6);
     // the writing tip: under the pointer on the page, lifted a hair unless pressing
     if (this.state === 'lean' || this.state === 'review') {
       const bi = b.input;
@@ -1240,7 +1251,7 @@ export class Keeper {
     this.world.shared.uFogNear.value = haar ? 0.4 : 8;
     const C = this.bookCentre();
     let p;
-    if (['write', 'pen', 'lean', 'turn', 'close'].includes(pose)) {
+    if (['write', 'ready', 'pen', 'quill', 'lean', 'turn', 'close'].includes(pose)) {
       this.book.open = true;
       p = this.leanPose();
       this.tipStale = true;
@@ -1272,6 +1283,7 @@ export class Keeper {
     this.hands.blend = 1;
     this.hands.pose = pose;
     this.hands.spring = { R: null, L: null };
+    for (const a of [this.hands.R, this.hands.L]) { a.pp = null; a.roll = null; }
   }
 
   applyCamera() {
@@ -1485,7 +1497,8 @@ export class Keeper {
     if (this.state === 'read' || this.state === 'stairs') return 'pointer';
     if (this.state === 'lean') {
       const c = this.book.input.cursor() || this.book.scene.cursor();
-      if (this.pointerOnPage && this.mode === 'dusk' && this.game.input.type === 'mouse' && (!c || c === 'crosshair' || c === 'default')) return 'none';
+      // the pencil's point is the cursor while it's on the page; otherwise the page's own cursor shows
+      if (this.pointerOnPage && this.mode === 'dusk' && this.hands.pose === 'write' && this.game.input.type === 'mouse' && (!c || c === 'crosshair' || c === 'default')) return 'none';
       return c || 'default';
     }
     return this.walker.locked ? 'none' : 'default';
