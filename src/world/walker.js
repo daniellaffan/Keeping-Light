@@ -23,6 +23,10 @@ export class Walker {
     const canvas = game.canvas, inp = game.input;
 
     document.addEventListener('pointerlockchange', () => { this.locked = document.pointerLockElement === canvas; });
+    // some embedded browsers refuse pointer lock outright; drag-to-look covers it, so the refusal isn't news
+    window.addEventListener('unhandledrejection', (e) => {
+      if (e.reason && e.reason.name === 'SecurityError' && /pointer lock/i.test(e.reason.message || '')) e.preventDefault();
+    });
     inp.on('down', (x, y, e) => {
       if (!this.enabled) return;
       if (e.pointerType === 'touch') {

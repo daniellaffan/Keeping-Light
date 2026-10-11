@@ -668,6 +668,7 @@ export class LogbookScene {
         if (this.inking && inkP < 1 && i === 0) {
           const k = Math.min(pts.length - 1, Math.floor(pts.length * inkP));
           glow(L.light, pts[k][0], pts[k][1], 26, '#E6C27A', 0.35);
+          this.penAt = pts[k];   // where the nib is (the 3D hand follows it)
         }
       }
     });

@@ -56,7 +56,14 @@ out vec3 vWorld;
 out vec3 vNormalW;
 out vec2 vUv;
 out vec3 vObj;
+#ifdef USE_TINT
+in vec4 tint;      // per-vertex pigment multiplier; a = where ink stains gather
+out vec4 vTint;
+#endif
 void main() {
+  #ifdef USE_TINT
+    vTint = tint;
+  #endif
   vec3 transformed = vec3(position);
   vec3 objectNormal = vec3(normal);
   #include <skinbase_vertex>
@@ -89,6 +96,11 @@ in vec3 vWorld;
 in vec3 vNormalW;
 in vec2 vUv;
 in vec3 vObj;
+#ifdef USE_TINT
+in vec4 vTint;
+uniform vec3 uStainCol;
+uniform float uStain;
+#endif
 
 uniform vec3 uColor;
 uniform vec3 uColor2;      // a second pigment the wash drifts toward
@@ -122,6 +134,12 @@ void main() {
     vec4 tx = texture(uMap, vUv);
     base = mix(base, base * tx.rgb * 1.08, uMapAmt * tx.a);
   }
+  #ifdef USE_TINT
+    base *= vTint.rgb;
+    // ink worked into the skin: patchy, darker in the grain
+    float st = vTint.a * uStain * smoothstep(0.25, 0.65, fbm3d(vObj * 2.2 + 9.0) + vTint.a * 0.4);
+    base = mix(base, uStainCol, clamp(st, 0.0, 0.85));
+  #endif
 
   // light: a wrapped, softly banded value study. Shadow is a cooler, deeper glaze of the same pigment.
   float ndl = dot(n, uSunDir);
@@ -199,13 +217,15 @@ const col3 = (c) => (c instanceof THREE.Color ? c : new THREE.Color(c));
 //   inkMap, inkAmt  lettering painted on the surface
 //   noiseScale      object units → noise units (≈ 1 / metres per blotch)
 //   world           take noise from world position (for big static scenery)
+//   tint            geometry carries a vec4 'tint' attribute (pigment multiplier, a = ink stain);
+//                   stain / stainCol set how much ink has gathered and its colour
 export function wash(o = {}) {
   const c = col3(o.color ?? '#B9A88C');
   const m = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
     vertexShader: VERT,
     fragmentShader: FRAG,
-    defines: o.world ? { WORLD_NOISE: 1 } : {},
+    defines: { ...(o.world ? { WORLD_NOISE: 1 } : {}), ...(o.tint ? { USE_TINT: 1 } : {}) },
     uniforms: {
       ...SHARED,
       uColor: { value: c },
@@ -225,6 +245,8 @@ export function wash(o = {}) {
       uEmitMap: { value: o.emitMap || CLEAR },
       uEmitMapAmt: { value: o.emitMap ? (o.emitMapAmt ?? 1) : 0 },
       uNoiseScale: { value: o.noiseScale ?? 1 },
+      uStainCol: { value: col3(o.stainCol ?? '#1F2940') },
+      uStain: { value: o.stain ?? 0 },
     },
     side: o.side ?? THREE.FrontSide,
   });

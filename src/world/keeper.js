@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { buildRoom, ROOM } from './room.js';
 import { Book } from './book.js';
 import { Walker } from './walker.js';
+import { Hands, POSE_NAMES } from './hands.js';
 import { wash } from './materials.js';
 import { TOWER, ROOM_YAW, CLIFF_TOP, skyFromPalette } from './geo.js';
 import { palette } from '../render/scenes/bay-paint.js';
@@ -45,6 +46,13 @@ export class Keeper {
     this.book.group.updateMatrixWorld(true);
     this.book.intercept.inkPlan = (w, meta) => this.onInked(w, meta);
     this.book.intercept.onDawnDone = () => this.onBookClosed();
+
+    // the keeper's forearms and hands
+    this.hands = new Hands();
+    W.scene.add(this.hands.group);
+    this.poseOverride = null;     // debug H cycles through the poses
+    this.frames = {};
+    this.tip = new THREE.Vector3();
 
     this.walker = new Walker(game);
     this.walker.onTap = () => this.use();
@@ -128,7 +136,7 @@ export class Keeper {
   }
 
   // ---------------- lighting by time of day ----------------
-  setLight(tod) {
+  setLight(tod, haar = this.night.haar || 0) {
     const S = this.world.shared;
     const P = palette(tod === 'night' ? 'night' : tod === 'dawn' ? 'dawn' : tod === 'day' ? 'afternoon' : 'dusk', this.night.act >= 3 ? 0.4 : 0);
     const sunDir = new THREE.Vector3(-0.8, 0.22, 0.35).normalize();
@@ -150,7 +158,16 @@ export class Keeper {
       S.uSunAmt.value = 0.9; S.uAmbient.value = 0.42; S.uLampAmt.value = 0; S.uRimAmt.value = 0;
       S.uLightTint.value.setRGB(1, 0.98, 0.94); S.uShadeTint.value.setRGB(0.62, 0.66, 0.82);
     }
-    S.uFogDensity.value = 0.0015 + (this.night.haar || 0) * 0.02;
+    // haar: the light goes grey and flat, the sun's warmth taken out of it
+    if (haar > 0) {
+      const h = Math.min(1, haar);
+      S.uLightTint.value.lerp(new THREE.Color(0.86, 0.88, 0.9), h * 0.7);
+      S.uShadeTint.value.lerp(new THREE.Color(0.68, 0.71, 0.77), h * 0.6);
+      S.uSunAmt.value *= 1 - 0.65 * h;
+      S.uAmbient.value += 0.12 * h;
+      S.uRimAmt.value *= 1 - 0.3 * h;
+    }
+    S.uFogDensity.value = 0.0015 + haar * 0.02;
     this.room.flame.visible = this.room.halo.visible = tod !== 'day';
     this.palette = P;
   }
@@ -294,8 +311,9 @@ export class Keeper {
     const hit = this.book.pick(nx, ny, this.world.camera);
     const bi = this.book.input;
     this.pointerNdc = [nx, ny];
-    if (!hit) { if (kind === 'up') bi.pointerUp(-9999, -9999, e); return; }
-    const [lx, ly] = hit;
+    if (!hit) { this.pointerOnPage = false; if (kind === 'up') bi.pointerUp(-9999, -9999, e); return; }
+    const [lx, ly, onPage] = hit;
+    this.pointerOnPage = onPage && e.pointerType !== 'touch' || (onPage && this.book.input.down);
     if (kind === 'down') bi.pointerDown(lx, ly, e);
     else if (kind === 'move') bi.pointerMove(lx, ly, e);
     else bi.pointerUp(lx, ly, e);
@@ -304,6 +322,12 @@ export class Keeper {
   key(e) {
     if (!this.active()) return false;
     const k = e.key;
+    if (this.game.debug && (k === 'h' || k === 'H') && !e.metaKey && !e.ctrlKey) {
+      const i = this.poseOverride ? POSE_NAMES.indexOf(this.poseOverride) + 1 : 0;
+      this.poseOverride = i < POSE_NAMES.length ? POSE_NAMES[i] : null;
+      this.flash = { text: this.poseOverride ? 'hands: ' + this.poseOverride : 'hands: by the moment', t: 0 };
+      return true;
+    }
     if (this.state === 'walk' && (k === 'e' || k === 'E' || k === 'Enter' || k === ' ')) { this.use(); return true; }
     if (this.state === 'lean') {
       if (k === 'Escape' || k === 'q' || k === 'Q') { this.standUp(); return true; }
@@ -334,6 +358,10 @@ export class Keeper {
   update(dt) {
     const g = this.game;
     this.t += dt; this.st += dt;
+    // a held page turn (the hands review) stays mid-air
+    const fa = this.book.scene.flipAnim;
+    if (this.state === 'review' && fa?.hold) fa.t = 0.42 - dt / 0.55;
+    if (this.flash) { this.flash.t += dt; if (this.flash.t > 2.2) this.flash = null; }
     this.book.update(dt, { redraw: this.state === 'lean' || this.state === 'lean-in' || this.state === 'closing' || this.state === 'lean-out' });
     this.book.setSingle(g.layers.cssW / g.layers.cssH < 0.95);
 
@@ -358,10 +386,8 @@ export class Keeper {
       case 'light': {
         // turn to the lamp control at the wall, reach, pull it down; the light starts turning
         if (this.st < dt * 1.5) {
-          const C = this.roomPoint(ROOM.control.deg, ROOM.R - 0.15, ROOM.control.h);
           const from = this.cam.pos.clone();
-          const p = this.roomPoint(ROOM.control.deg + 4, ROOM.R - 1.0, 1.62);
-          this.blendTo(this.poseLooking(p, C, 60), 1.1, null, { dip: 0.02 });
+          this.blendTo(this.lampPose(), 1.1, null, { dip: 0.02 });
           this.lightFrom = from;
         }
         const k = smooth(1.3, 2.1, this.st);
@@ -393,15 +419,39 @@ export class Keeper {
     this.stepBlend(dt);
     this.lit = Math.max(0, this.lit - dt * 0.4);
     this.applyCamera();
+    this.updateHands(dt);
     this.updateClock();
     this.updatePrompt(dt);
   }
 
+  // standing at the lamp control, near enough to reach the lever; it sits right of centre
+  lampPose() {
+    const C = this.roomPoint(ROOM.control.deg, ROOM.R - 0.2, ROOM.control.h + 0.22);
+    const eye = this.roomPoint(ROOM.control.deg + 5, ROOM.R - 0.62, 1.62);
+    const p = this.poseLooking(eye, C, 62);
+    p.yaw += 0.12;
+    return p;
+  }
+
+  // at the door, close enough to take the ring, which sits right of centre
+  doorPose() {
+    this.updateFrames();
+    const ring = this.frame('door').pos;
+    const inward = new THREE.Vector3().subVectors(this.roomPoint(0, 0, ring.y - this.room.group.position.y), ring).setY(0).normalize();
+    const side = new THREE.Vector3(0, 1, 0).cross(inward);
+    const eye = ring.clone().addScaledVector(inward, 0.5).addScaledVector(side, 0.26).setY(this.roomPoint(0, 0, 1.62).y);
+    return this.poseLooking(eye, ring.clone().addScaledVector(side, 0.12).add(new THREE.Vector3(0, 0.3, 0)), 62);
+  }
+
+  // sitting forward in the chair, looking out and down over the bay; the forearms on the chair's arms
+  // are just in view at the bottom
   chairPose() {
     const c = this.room.chair;
-    const seat = new THREE.Vector3(0, 1.14, 0.08).applyMatrix4(c.matrixWorld);
+    const seat = new THREE.Vector3(0, 1.12, 0.1).applyMatrix4(c.matrixWorld);
     const out = this.roomPoint(ROOM.window.deg, ROOM.R + 6, 0.6);
-    return this.poseLooking(seat, out, 58);
+    const p = this.poseLooking(seat, out, 64);
+    p.pitch = -0.34;
+    return p;
   }
 
   sitDown() {
@@ -409,6 +459,150 @@ export class Keeper {
     this.pending = null;
     this.setState('chair');
     this.game.inkPlan(p.waypoints, p.meta);
+  }
+
+  // ---------------- hands ----------------
+  // the pose for this moment: what the keeper is doing decides what the hands are doing
+  handPose() {
+    if (this.poseOverride) return this.poseOverride;
+    const sc = this.book.scene;
+    switch (this.state) {
+      case 'walk': return 'walk';
+      case 'lean-in': return 'lean';
+      case 'lean':
+        if (sc.inking) return 'pen';
+        if (sc.flipAnim && !this.book.single) return 'turn';
+        return this.mode === 'dusk' ? 'write' : 'lean';
+      case 'lean-out': return sc.inking ? 'pen' : 'lean';
+      case 'light': return 'lamp';
+      case 'to-chair': return 'walk';
+      case 'chair': return 'chair';
+      case 'closing': return 'close';
+      case 'review': return this.reviewPose;
+      default: return 'lean';
+    }
+  }
+
+  frame(name) { return (this.frames[name] ||= { pos: new THREE.Vector3(), quat: new THREE.Quaternion(), fwd: new THREE.Vector3() }); }
+
+  // where each pose's frame is in the world this frame
+  updateFrames() {
+    const c = this.cam, _s = new THREE.Vector3();
+    const body = this.frame('body');
+    body.pos.copy(c.pos);
+    body.quat.setFromEuler(new THREE.Euler(c.pitch * 0.35, c.yaw, 0, 'YXZ'));
+    body.fwd.set(0, 0, -1).applyQuaternion(body.quat);
+    const fromObj = (name, obj, local = null, extra = null) => {
+      const f = this.frame(name);
+      obj.updateWorldMatrix(true, false);
+      obj.matrixWorld.decompose(f.pos, f.quat, _s);
+      if (local) f.pos.copy(local.clone().applyMatrix4(obj.matrixWorld));
+      if (extra) f.quat.multiply(extra);
+    };
+    fromObj('book', this.book.group);
+    // the mug, when it's in the hands: in the lap, a little out from the chest
+    const mf = this.frame('mug');
+    mf.pos.set(0, -0.3, -0.42).applyQuaternion(body.quat).add(body.pos);
+    mf.quat.setFromEuler(new THREE.Euler(0, c.yaw, 0, 'YXZ'));
+    fromObj('chair', this.room.chair);
+    const b = this.book, Wl = 0.62 / 1512 * 728, Hl = 0.62 / 1512 * 872;
+    fromObj('leaf', b.leaf, new THREE.Vector3(Wl * 0.94, 0, Hl / 2 * 0.86));
+    fromObj('lid', b.coverLid, new THREE.Vector3(-0.62 / 2 * 0.92, 0, 0.62 / 1512 * 920 / 2 * 0.86));
+    // the lever's shaft, a hand's width from the ball
+    fromObj('lever', this.room.lever, new THREE.Vector3(0, 0, -0.17));
+    // the door's ring
+    const D = ROOM.door, da = D.deg * DEG;
+    const dl = new THREE.Vector3(Math.sin(da) * (ROOM.R + 0.3) + Math.cos(da) * (D.half - 0.2), 1.0, -Math.cos(da) * (ROOM.R + 0.3) + Math.sin(da) * (D.half - 0.2));
+    const door = this.frame('door');
+    door.pos.copy(dl.applyMatrix4(this.room.group.matrixWorld));
+    door.quat.setFromEuler(new THREE.Euler(0, ROOM_YAW - da, 0, 'YXZ'));
+    // the stair rail, just ahead of whoever is climbing it
+    const rail = this.frame('rail');
+    const st = ROOM.stairs, i = this.railStep ?? 3;
+    const ra = (st.from + i * st.step) * DEG, ra2 = (st.from + (i + 1) * st.step) * DEG, rr = st.r0 + 0.05;
+    const p1 = new THREE.Vector3(Math.sin(ra) * rr, (i + 1) * st.rise + 0.9, -Math.cos(ra) * rr).applyMatrix4(this.room.group.matrixWorld);
+    const p2 = new THREE.Vector3(Math.sin(ra2) * rr, (i + 2) * st.rise + 0.9, -Math.cos(ra2) * rr).applyMatrix4(this.room.group.matrixWorld);
+    rail.pos.copy(p1);
+    const dir = p2.clone().sub(p1).normalize();
+    rail.quat.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), dir, new THREE.Vector3(0, 1, 0)));
+    return body;
+  }
+
+  updateHands(dt) {
+    const h = this.hands, b = this.book, sc = b.scene;
+    const body = this.updateFrames();
+    h.setPose(this.handPose(), this.state === 'lean' ? 0.35 : 0.6);
+    // the writing tip: under the pointer on the page, lifted a hair unless pressing
+    if (this.state === 'lean' || this.state === 'review') {
+      const bi = b.input;
+      if (sc.inking && sc.penAt) b.worldAt(sc.penAt[0], sc.penAt[1], this.tip);
+      else if (this.pointerOnPage) {
+        b.worldAt(bi.x, bi.y, this.tip);
+        this.tip.y += bi.down ? 0 : 0.006;
+      } else if (this.tip.lengthSq() === 0 || this.tipStale) { b.worldAt(b.single ? 430 : 1150, b.single ? 700 : 560, this.tip); this.tip.y += 0.006; this.tipStale = false; }
+    }
+    h.tip = this.tip;
+    // the mug comes off the sill into the hands, and goes back
+    const mug = this.room.mug, inHands = this.hands.pose === 'mug';
+    if (inHands !== this.mugHeld) {
+      this.mugHeld = inHands;
+      if (inHands) this.world.scene.add(mug); else { this.room.group.add(mug); mug.position.copy(mug.userData.home); mug.quaternion.identity(); }
+    }
+    if (inHands) { const mf = this.frames.mug; mug.position.copy(mf.pos).add(new THREE.Vector3(0, -0.045, 0)); mug.quaternion.copy(mf.quat); }
+    const sh = (x) => new THREE.Vector3(x, -0.25, 0.1).applyQuaternion(body.quat).add(body.pos);
+    const pole = (x) => new THREE.Vector3(x, -1, 0.25).applyQuaternion(body.quat);
+    h.setStain(0.12 + 0.75 * Math.min(1, ((this.night?.id || 1) - 1) / 14));
+    h.update(dt, this.frames, {
+      shoulders: { R: sh(0.17), L: sh(-0.17) },
+      poles: { R: pole(0.6), L: pole(-0.6) },
+      bob: this.walker.bobT,
+      drift: this.night?.drift || 0,
+    });
+  }
+
+  // Debug: hold a pose where it's naturally seen, under a given light (for the hands review)
+  review(pose, tod = 'dusk', { haar = 0 } = {}) {
+    this.reviewPose = pose;
+    this.poseOverride = null;
+    this.walker.setEnabled(false);
+    this.setLight(tod, haar);
+    this.lookOverride = { fog: haar ? 0.55 : 0, haar };
+    this.world.shared.uFogDensity.value = haar ? 0.35 : this.world.shared.uFogDensity.value;
+    this.world.shared.uFogNear.value = haar ? 0.4 : 8;
+    const C = this.bookCentre();
+    let p;
+    if (['write', 'pen', 'lean', 'turn', 'close'].includes(pose)) {
+      this.book.open = true;
+      p = this.leanPose();
+      this.tipStale = true;
+      this.pointerOnPage = false;
+    } else if (pose === 'chair' || pose === 'mug') {
+      p = this.chairPose();
+    } else if (pose === 'lamp') {
+      p = this.lampPose();
+    } else if (pose === 'door') {
+      p = this.doorPose();
+    } else if (pose === 'rail') {
+      this.railStep = 3;
+      const st = ROOM.stairs, a = st.from + 2 * st.step;
+      const eye = this.roomPoint(a, (st.r0 + ROOM.R) / 2, 2 * st.rise + 1.62);
+      const ahead = this.roomPoint(a + 25, (st.r0 + ROOM.R) / 2 - 0.2, 4 * st.rise + 1.3);
+      p = this.poseLooking(eye, ahead, 62);
+    } else {
+      const eye = this.roomPoint(200, 1.0, 1.62);
+      p = this.poseLooking(eye, C, 62);
+      p.pitch = -0.7;
+    }
+    if (pose === 'close') this.book.setClosed(0.42);
+    else this.book.setClosed(0);
+    if (pose === 'turn') this.book.scene.flipAnim = { t: 0.3, dir: 1, from: this.book.scene.idx, hold: true };
+    else if (this.book.scene.flipAnim?.hold) this.book.scene.flipAnim = null;
+    this.applyPose(p);
+    this.blendT = null;
+    this.state = 'review';
+    this.hands.blend = 1;
+    this.hands.pose = pose;
+    this.hands.spring = { R: null, L: null };
   }
 
   applyCamera() {
@@ -442,18 +636,27 @@ export class Keeper {
     if (this.mode === 'dusk' || this.mode === 'dawn') base.warmth = (n.look.warmth ?? 0.5) + (this.mode === 'dusk' ? 0.12 : -0.05);
     base.lightGain = 1;
     base.wobble = 2.2;
+    if (this.lookOverride) Object.assign(base, this.lookOverride);
     return base;
   }
 
   cursor() {
-    if (this.state === 'lean') return this.book.input.cursor() || this.book.scene.cursor() || 'default';
+    if (this.state === 'lean') {
+      const c = this.book.input.cursor() || this.book.scene.cursor();
+      if (this.pointerOnPage && this.mode === 'dusk' && this.game.input.type === 'mouse' && (!c || c === 'crosshair' || c === 'default')) return 'none';
+      return c || 'default';
+    }
     return this.walker.locked ? 'none' : 'default';
   }
 
-  hudActive() { return !!this.prompt || !!this.walker.stick; }
+  hudActive() { return !!this.prompt || !!this.walker.stick || !!this.flash; }
 
   drawHud(L) {
     this.walker.drawTouch(L);
+    if (this.flash) {
+      const v = L.view;
+      letter(L.ink, this.flash.text, v.x0 + 40, v.y0 + 60, { hand: 'keeper', size: 30, alpha: 0.8 * (1 - smooth(1.6, 2.2, this.flash.t)), color: '#2B2622' });
+    }
     if (!this.prompt) return;
     const v = L.view;
     const x = (v.x0 + v.x1) / 2, y = v.y1 - 70;

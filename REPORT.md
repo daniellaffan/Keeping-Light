@@ -175,3 +175,57 @@ Live, with motion (`?debug=1`):
   * With every `localStorage` call throwing, the game plays on without saving and with no errors.
 * **Audio:** an offline render was checked for levels with no NaN or clipping.
 * **Screenshots:** every distinct scene was reviewed at 1280×800 and iterated on.
+
+## First person: the hands (milestone 3)
+
+The keeper is only ever two forearms and hands (`src/world/hands.js`). Each arm is one skinned mesh:
+forearm and palm are a single loft, so there is no seam at the wrist, and the fingers and thumb are
+tubes along their bone chains. A separate wool sleeve mesh is pushed up to just below the elbow.
+The skin uses the same `wash` material as the room, through the four watercolor layers. It adds
+a per-vertex tint:
+* warm on the backs, cooler between the knuckles, pink at the nail beds;
+* a graphite smudge on the right little finger;
+* ink on the right index, middle and thumb that builds over the nights (`uStain`, 0.12 → 0.87 by
+  night 15).
+
+**Poses.** Eleven hand-authored poses blend into one another: walk, door, lean, write (tripod
+pencil), pen (dip pen), turn, close, chair, mug, lamp and rail. Each pose places the wrist in a
+frame: the body, the book, the turning leaf, the cover, the chair, the mug, the lamp lever, the door
+ring or the stair rail. Two-bone IK then solves the shoulder to the wrist, and the roll is shared
+between the forearm's twist bone and the wrist.
+* **Writing.** The pencil's tip sits exactly under the cursor. The tip sets where the wrist goes, so
+  there is no spring lag. The thumb, index and middle finger were fitted to the shaft by a small
+  optimiser (`__review.fit('write')` under `?debug=1`).
+* **Movement.** Every other target is on a spring with a little overshoot. The hands breathe, and a
+  tremor grows with `drift`.
+* **Debug.** `H` cycles the poses in play.
+
+**Review.** `__review.hands()` (debug) holds each pose where it is naturally seen, under day, dusk
+lamp, night and haar. It tiles the four into `docs/screenshots/hands-<pose>.jpg`. The first round
+found several bad poses, which were fixed:
+
+| Pose | Problem in the first round | Fix |
+| --- | --- | --- |
+| all | A seam at the wrist | Forearm and palm as one loft |
+| write and pen | The tripod rolled over, and the fingers missed the pencil | Grip fitted to the shaft |
+| lean, write | The left hand splayed and floated off the page | Flatter `FLAT` shape, hand lowered onto the page, hands moved to the book's corners |
+| turn | The hand followed the leaf up into the camera and filled the frame | The fingers lift the near corner and the hand stays low |
+| close | A fist pressed through the cover | Palm under the cover's edge, tilted away |
+| chair | Claws seen from straight above | Chair moved to the window with longer arms; the keeper sits back, so the hands rest at the bottom of the view and the bay fills the window |
+| mug | The palms met in a blob over the mug | Mug brought up into view; hands cup its sides |
+| lamp, door | Arms floated from out of reach | Camera brought within arm's length; overhand grip on the lever |
+| walk | Hands never in view | Carried a little forward; fingertips show when looking down |
+| haar | Looked the same as dusk | `setLight` greys and flattens the light with the night's haar |
+
+Sheets: [write](docs/screenshots/hands-write.jpg), [pen](docs/screenshots/hands-pen.jpg),
+[lean](docs/screenshots/hands-lean.jpg), [turn](docs/screenshots/hands-turn.jpg),
+[close](docs/screenshots/hands-close.jpg), [chair](docs/screenshots/hands-chair.jpg),
+[mug](docs/screenshots/hands-mug.jpg), [lamp](docs/screenshots/hands-lamp.jpg),
+[door](docs/screenshots/hands-door.jpg), [rail](docs/screenshots/hands-rail.jpg),
+[walk](docs/screenshots/hands-walk.jpg).
+
+**Still rough.**
+* Reaching for the lamp and the door, the upper-arm sleeve is in view and the hand is small. That is
+  how it really looks, but it isn't pretty.
+* The turn and close poses are momentary, so they were checked only at a held frame.
+* The view out of the window is still the placeholder sea and cliff. The bay comes in milestone 4.

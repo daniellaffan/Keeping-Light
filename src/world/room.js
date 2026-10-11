@@ -17,7 +17,7 @@ export const ROOM = {
   door: { deg: 100, half: 0.48, top: 2.05 },
   stairs: { from: 135, step: 12, rise: 0.22, count: 14, r0: 2.3 },
   table: { deg: 330, r: 2.9, w: 1.34, d: 0.76, h: 0.76 },
-  chair: { deg: 0, r: 2.1 },
+  chair: { deg: 0, r: 2.75 },
   stove: { deg: 52, r: 2.75 },
   control: { deg: 309, h: 1.22 },
   clock: { deg: 346, h: 2.25 },
@@ -269,8 +269,8 @@ export function buildRoom() {
   chb.box(M.oak, 0.62, 0.62, 0.06, [0, 0.74, 0.27], { rot: [-0.22, 0, 0] });
   chb.box(M.cushion, 0.52, 0.5, 0.07, [0, 0.76, 0.2], { rot: [-0.22, 0, 0], wonk: 2 });
   for (const s of [-1, 1]) {
-    chb.box(M.oak, 0.11, 0.04, 0.6, [s * 0.36, 0.66, 0.0]);
-    chb.box(M.oak, 0.05, 0.22, 0.05, [s * 0.36, 0.53, -0.24]);
+    chb.box(M.oak, 0.11, 0.04, 0.74, [s * 0.36, 0.66, -0.07]);
+    chb.box(M.oak, 0.05, 0.22, 0.05, [s * 0.36, 0.53, -0.36]);
     for (const z of [-0.24, 0.24]) chb.box(M.oak, 0.06, 0.4, 0.06, [s * 0.28, 0.2, z]);
   }
   // a mug on the sill

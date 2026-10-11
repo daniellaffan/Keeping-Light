@@ -325,6 +325,7 @@ async function boot() {
     const { Keeper } = await import('./world/keeper.js');
     game.keeper = new Keeper(game);
     Object.assign(game.scenes, game.keeper.wrappers);
+    if (DEBUG) (await import('./world/review.js')).installReview(game);
   }
   const loading = document.getElementById('loading');
   loading.style.opacity = '0';
