@@ -411,7 +411,7 @@ export function buildHandField(skel) {
     const a = fn[i], b = fn[i + 1];
     const A = skel.frame(a + '1').at(0, -2.6, -14), B = skel.frame(b + '1').at(0, -2.6, -14);
     add(capsule(A, B, 4.2), 6, 'web' + i);
-    add(capsule(skel.frame(a + '1').at(0, -3, -5), skel.frame(b + '1').at(0, -3, -5), 5.2), 6, 'web' + i);
+    add(capsule(skel.frame(a + '1').at(0, -1.6, -5), skel.frame(b + '1').at(0, -1.6, -5), 5.2), 6, 'web' + i);
     parts['web' + i] = { a, b, A, B };
   }
 

@@ -497,3 +497,111 @@ Screenshots:
 * Measure the frame rate on an integrated-GPU laptop and on a phone (the brief's 60 fps target).
 * Try pointer lock and the touch stick.
 * Look at the watercolor under a real GPU against these software-rendered shots.
+
+## The hands, remodelled (milestone 7)
+
+**One continuous old skin** (`src/world/handmesh.js`). The old arm was a lofted forearm and palm with
+separate tubes for the fingers, which looked like sausages pushed into a mitten. The new one is built
+the way an anatomy drawing is: bony shapes smooth-unioned into one signed distance field.
+* **The shapes:** the forearm, the palm slab, the long bones of the hand with their knuckle heads, the
+  ball of the thumb, the heel of the hand, the pads under the knuckles, the webs between the fingers
+  and the thumb, and phalanges with joints wider than the shafts between them.
+* **Meshing.** The field is meshed once with surface nets (1.25 mm grid, each vertex pulled onto the
+  surface, normals from the field). Sealed pockets between the shapes are dropped.
+* **Weights.** Each vertex is weighted to the bones by which part of the hand owns it: the nearest
+  part, softly. Along a finger, the joint blends are short.
+* **Bind pose.** The skin is built with the fingers spread, so they can be told apart; every finger
+  pose is now absolute.
+* **An old man's hands** (the drawing references agree: less fat, so bone, tendon and vein show).
+  * Big knuckles and knobby finger joints.
+  * Extensor tendons, and wandering raised veins on the backs of the hands and up the forearms,
+    painted blue-grey.
+  * Age spots and mottling.
+  * The skin shader (`skin: true` on `wash`) draws, in the ink layer, bunched wrinkles over the
+    knuckles, a crêpe of fine crossing lines on the backs, and each nail's outline.
+  * Skin takes softer light bands than the room (`band`, `bare`), so small forms don't turn into
+    hard stripes.
+* **The sleeves** now run up over the shoulder and close, so from above they no longer show as open
+  tubes.
+* **Building it.** About 64k vertices per arm, about 1.4 s to build in this container. It's done in a
+  module worker started at boot, alongside the fonts, so the loading screen stays live. `prepareSkin`
+  falls back to building in place.
+
+**No more shaking.**
+* The tremor (23–37 Hz wobble on every wrist target, growing with drift), the finger jitter, the
+  breathing bob and the under-damped spring are gone.
+* Wrists now follow their targets critically damped. Nothing overshoots.
+* Held in any pose, a hand moves **0.000 mm a frame**. Before, it was 0.17–0.38 mm a frame, up to
+  1.3 mm while writing.
+
+**Natural wrists.**
+* **The elbow.** The IK puts the elbow where the forearm meets the hand as a wrist likes it.
+  Otherwise it leans on the body's pole, and it swings round at a limited rate.
+* **The forearm's turn** is one continuous angle from its neutral (thumb-up) position, within ±100°,
+  shared down the arm. It no longer wraps round from +180° to −180°.
+* **The wrist** is held inside an elliptical cone of its real range: 55° back, 65° forward, 20°
+  toward the thumb, 30° toward the little finger, and little twist of its own.
+* **Hanging hands** follow their arms (`align`).
+* **The arms ride with the body**, and at a cut they are simply placed where they belong.
+* **Poses can place a point of the hand.** The fingertips go under the cover's edge, and the palm
+  over the lever's ball (`at`). The cover and lever grips were fitted by a small search for the most
+  comfortable wrist.
+* **Checked** with a per-pose wrist report and a frame-by-frame trace of a whole autoplayed night.
+  * Before: hanging hands bent 78–103°, the lamp grip 153°/305°, and transitions flipped the wrist up
+    to 154° in one frame.
+  * Now: every pose is within range (at most 39° back, 30° forward, 17° toward the thumb, 28° toward
+    the little finger).
+  * The worst transition is about 50° in a frame, and only under autoplay's compressed timing.
+
+**Never over the journal.**
+* Leaning over the book, both hands rest on the table beside it. The fingertips reach at most to the
+  leather beyond the pages.
+* The pencil comes onto the page only while you are drawing (and for a second after). Otherwise the
+  page's own crosshair shows.
+* The left hand never goes onto the pages.
+* The cover is lifted at dawn with the fingertips and let fall.
+
+**Inking with a quill** (`src/world/inkwell.js`, `Keeper.inkSteps`). After the pencil line, *Ink
+the plan* now plays out:
+1. The head turns to the right of the book.
+2. The pencil is set down in the tray, point first, and falls flat.
+3. The hand takes the inkwell and slides it in beside the book.
+4. It draws the goose quill out of the well and dips it.
+5. It inks the line: the nib follows the route exactly, sliding smoothly between its points.
+6. The quill goes back in the well before the keeper straightens up.
+
+How it fits together:
+* The logbook's inking waits (`inking.hold`) until the nib is on the line. 2D play is unchanged.
+* The quill and the inkwell (glass with a brass collar, ink inside, the barbs of the feather drawn in
+  ink) are drawn in code, and the old dip pen is gone. The inkwell that was baked into the table
+  mesh was removed, and the red book moved back a few centimetres to make room for the hand.
+* The pencil grip was refitted to the new fingers.
+
+**Verified** (headless Chromium, SwiftShader):
+* `?debug=1&autoplay=1&speed=4` runs the whole game, all 19 nights with the inking each dusk, to
+  `AUTOPLAY COMPLETE` with no console errors.
+* `node tools/check-nights.mjs` passes.
+* The debug studio camera (`__review.studio(pose, {hand, az, el, dist})`) and the `show` pose were
+  used to look at the hands from every side.
+
+Screenshots:
+* [the skin from four sides](docs/screenshots/40-hands-old-skin.jpg)
+* [holding things: pencil, lever, mug, cover](docs/screenshots/41-hands-holding.jpg)
+* [inking the plan with the quill](docs/screenshots/42-inking-with-the-quill.jpg)
+* [before and after](docs/screenshots/43-hands-before-after.jpg)
+* [both hands beside the book, the pages clear](docs/screenshots/44-hands-beside-the-book.jpg)
+* The `hands-<pose>.jpg` sheets were regenerated, and `hands-ready.jpg` was added.
+
+**Still rough.**
+* **Covering while writing.** While drawing, the pencil hand covers the page below and to the right
+  of its point, and so does the quill hand while it inks. A hand can't write otherwise.
+* **The right hand at rest** lies beside the book, outside the leaning view's frame (only the left
+  one shows). That's how the camera is framed.
+* **Momentary poses.** The cover-lift is mostly hidden behind the cover. In the mug pose, the
+  fingertips stop just short of the mug.
+* **Mesh defect.** Three sub-millimetre flipped triangles where a vein crosses a tendon on the back of
+  the wrist.
+* **Build time.** On a slow phone the skin may take a few seconds to build. It does so while the title
+  shows.
+* **Hardware.** Everything was seen only in software rendering, not yet under a real GPU.
+

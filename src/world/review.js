@@ -25,9 +25,13 @@ export function installReview(game) {
     for (let i = 0; i < LIGHTS.length; i++) {
       k.review(pose, LIGHTS[i][0], LIGHTS[i][1]);
       game.snapLook = true;
-      // let the springs and the look settle, then take the frame in the same task it's drawn
+      // let the springs and the look settle (unpainted), then take the frame in the same task it's drawn
+      const nr = game.noRender;
+      game.noRender = true;
       game.step(40, 1 / 30);
+      game.noRender = false;
       game.step(1, 1 / 30);
+      game.noRender = nr;
       sx.drawImage(grab(tw, th), (i % 2) * tw, Math.floor(i / 2) * th);
       sx.font = 'italic 20px "Cormorant Garamond", serif';
       sx.fillStyle = 'rgba(30,26,22,0.8)';

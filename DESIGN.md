@@ -43,7 +43,9 @@ src/world/geo.js           chart ↔ world (4 m to a chart unit), the tower, the
 src/world/keeper.js        the first-person game: phases, camera, states, prompts, HUD, autoplay
 src/world/room.js          the watch room, its door, stairs and sill, and the tower top seen from outside
 src/world/book.js          the logbook on the table: LogbookScene's layers as page textures, raycast input
-src/world/hands.js         the forearms and hands: skinned lofts, poses, two-bone IK, tremor
+src/world/hands.js         the forearms and hands: poses, two-bone IK with a wrist's limits, the grips
+src/world/handmesh.js      the old hands' skin as one distance field, meshed (in a worker) and weighted
+src/world/inkwell.js       the inkwell and the goose quill the plan is inked with
 src/world/walker.js        walking: keys and mouse look, touch stick, the pace, autoplay steering
 src/world/bay.js           the bay from the chart: land, sea, reefs, village, piers, ships, beam, beats
 src/world/night.js         the night from the chair: Fleet, the time-lapse and its slowdowns
@@ -131,8 +133,9 @@ take over through a bloom.
 
 ## Decisions made for first person
 
-* **Hands only.** No body, no shadow; two skinned forearms with eleven authored poses, two-bone IK,
-  and a tremor that grows with the handwriting's drift (REPORT, milestone 3).
+* **Hands only.** No body, no shadow; two skinned forearms with authored poses and two-bone IK held
+  inside a wrist's real range (REPORT, milestones 3 and 7). An old man's hands: one continuous skin,
+  bony knuckles, veins and wrinkles. They never shake, and they never lie over the pages.
 * **The bay is built from the chart** at 4 m to a unit, so the line in the book is the line from the
   window.
 * **The window faces the middle of the bay** (chart 50, 30), so the reefs fall inside it.
