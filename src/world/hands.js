@@ -14,84 +14,30 @@
 import * as THREE from 'three';
 import { wash } from './materials.js';
 import { knitTex } from './textures.js';
-import { buildHandField, meshField, skinVertices } from './handmesh.js';
 
-const UPPER = 0.30, FORE = 0.26;
-
-// Finger knuckles (wrist space), phalanx lengths; `out` is which way a positive spread turns the finger.
-// `fan` is the spread the skin was built at; `nat` the spread a hand at ease falls into.
-const FINGERS = {
-  index: { base: [-0.026, 0.004, -0.084], len: [0.041, 0.025, 0.020], out: 1, fan: 0.17, nat: 0.04 },
-  middle: { base: [-0.007, 0.006, -0.088], len: [0.045, 0.028, 0.021], out: 0.25, fan: 0.04, nat: 0.0 },
-  ring: { base: [0.012, 0.004, -0.084], len: [0.042, 0.026, 0.020], out: -1, fan: -0.10, nat: -0.035 },
-  little: { base: [0.028, -0.001, -0.074], len: [0.033, 0.021, 0.018], out: -1, fan: -0.24, nat: -0.09 },
-};
-const FNAMES = ['index', 'middle', 'ring', 'little'];
-// The thumb leaves the palm low on the radial side, angled forward, out and down; its nail turned out.
-const THUMB = { base: [-0.020, -0.011, -0.020], rest: [-0.32, 0.78, 0.85], len: [0.044, 0.032, 0.027] };
+import { UPPER, FORE, FINGERS, FNAMES, THUMB, buildSkinData } from './handmesh.js';
 
 const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const lerp = (a, b, t) => a + (b - a) * t;
 
-// The skin is built once, for the right hand at rest, and shared (mirrored) by both arms.
-let SKIN = null;
-const W0 = -UPPER - FORE;
-function restFrames() {
-  // the right hand's joints at rest, in the wrist's frame (millimetres)
-  const M = {};
-  const mm = (v) => v.map((x) => x * 1000);
-  const at = (parent, pos, euler) => {
-    const m = new THREE.Matrix4().compose(new THREE.Vector3(...pos), new THREE.Quaternion().setFromEuler(new THREE.Euler(...euler, 'YXZ')), new THREE.Vector3(1, 1, 1));
-    return parent ? parent.clone().multiply(m) : m;
-  };
-  for (const f of FNAMES) {
-    const F = FINGERS[f];
-    M[f + '1'] = at(null, mm(F.base), [0, F.fan, 0]);
-    M[f + '2'] = at(M[f + '1'], [0, 0, -F.len[0] * 1000], [0, 0, 0]);
-    M[f + '3'] = at(M[f + '2'], [0, 0, -F.len[1] * 1000], [0, 0, 0]);
-  }
-  M.thumb1 = at(null, mm(THUMB.base), THUMB.rest);
-  M.thumb2 = at(M.thumb1, [0, 0, -THUMB.len[0] * 1000], [0, 0, 0]);
-  M.thumb3 = at(M.thumb2, [0, 0, -THUMB.len[1] * 1000], [0, 0, 0]);
-  return M;
-}
-export function buildSkinData(boneIndex, h = 1.1) {
-  const t0 = performance.now();
-  const M = restFrames();
-  const frames = {};
-  const skel = {
-    frame: (name) => (frames[name] ||= frameOf(M[name])),
-    len: { thumb: THUMB.len.map((x) => x * 1000) },
-    bone: boneIndex,
-  };
-  for (const f of FNAMES) skel.len[f] = FINGERS[f].len.map((x) => x * 1000);
-  const H = buildHandField(skel);
-  SKIN_STATS.field = Math.round(performance.now() - t0);
-  // the box the skin lies in: the forearm up into the sleeve, out past the finger tips and the thumb
-  const min = [-48, -38, -175], max = [48, 40, 192];
-  for (const name of Object.keys(M)) {
-    const p = new THREE.Vector3().setFromMatrixPosition(M[name]);
-    const tip = new THREE.Vector3(0, 0, -32).applyMatrix4(M[name]);
-    for (const v of [p, tip]) for (let a = 0; a < 3; a++) { min[a] = Math.min(min[a], v.getComponent(a) - 14); max[a] = Math.max(max[a], v.getComponent(a) + 14); }
-  }
-  const mesh = meshField(H.field, { min, max }, h);
-  const { pos, nor, idx } = mesh;
-  const t1 = performance.now();
-  const sk = skinVertices(H, mesh, skel);
-  for (let i = 0; i < pos.length; i += 3) { pos[i] /= 1000; pos[i + 1] /= 1000; pos[i + 2] = pos[i + 2] / 1000 + W0; }
-  const t2 = performance.now();
-  SKIN_STATS.verts = pos.length / 3; SKIN_STATS.tris = idx.length / 3; SKIN_STATS.mesh = Math.round(t1 - t0); SKIN_STATS.skin = Math.round(t2 - t1);
-  return { pos, nor, idx: Uint32Array.from(idx), si: sk.si, sw: sk.sw, tint: sk.tint, tintL: sk.tintL, skin: sk.skin, field: H };
+// The skin is built once, for the right hand at rest, and shared (mirrored) by both arms. Building it
+// takes a second or so, so the game starts it in a worker as it boots (prepareSkin) and waits for it
+// only when the keeper is made; anything that comes first without it builds it here instead.
+let SKIN = null, pending = null;
+export function prepareSkin() {
+  if (SKIN) return Promise.resolve();
+  if (pending) return pending;
+  pending = new Promise((resolve) => {
+    let w;
+    const here = () => { if (!SKIN) SKIN = buildSkinData(); resolve(); };
+    try { w = new Worker(new URL('./handmesh-worker.js', import.meta.url), { type: 'module' }); } catch { here(); return; }
+    w.onmessage = (e) => { SKIN ||= e.data; w.terminate(); resolve(); };
+    w.onerror = (e) => { e.preventDefault?.(); w.terminate(); here(); };
+    w.postMessage(0);
+  });
+  return pending;
 }
 export const SKIN_STATS = {};
-function frameOf(m) {
-  const e = m.elements;
-  return {
-    o: new THREE.Vector3(e[12], e[13], e[14]), x: new THREE.Vector3(e[0], e[1], e[2]).normalize(),
-    y: new THREE.Vector3(e[4], e[5], e[6]).normalize(), z: new THREE.Vector3(e[8], e[9], e[10]).normalize(),
-    at(x, y, z) { return this.o.clone().addScaledVector(this.x, x).addScaledVector(this.y, y).addScaledVector(this.z, z); },
-  };
-}
 
 // ---------------------------------------------------------------------------------------------------
 // Geometry: rings of points along a bone chain, stitched into tubes, with bone weights and a tint.
@@ -231,7 +177,8 @@ export class Arm {
   // The skin: one surface for forearm, hand, fingers and thumb (handmesh.js), meshed once for the right
   // hand and mirrored for the left.
   buildSkin() {
-    if (!SKIN) SKIN = buildSkinData((name) => this.i(name));
+    if (!SKIN) SKIN = buildSkinData();
+    Object.assign(SKIN_STATS, SKIN.stats);
     const g = new THREE.BufferGeometry();
     const pos = SKIN.pos.slice(), nor = SKIN.nor.slice(), idx = SKIN.idx.slice();
     if (this.mirror) {
@@ -447,7 +394,6 @@ export class Hands {
     this.pose = 'walk';
     this.from = null; this.blend = 1; this.blendDur = 0.5;
     this.t = 0;
-    this.drift = 0;
     this.visible = true;
     // per-hand springs on the wrist target: a little overshoot when they move
     this.spring = { R: null, L: null };
@@ -485,9 +431,8 @@ export class Hands {
   }
 
   // frames: { body: {pos, quat}, book: {...}, ... }; shoulders: { R: Vector3, L: Vector3 } world; pole dirs
-  update(dt, frames, { shoulders, poles, bob = 0, drift = 0 }) {
+  update(dt, frames, { shoulders, poles, bob = 0 }) {
     this.t += dt;
-    this.drift = drift;
     if (this.blend < 1) this.blend = Math.min(1, this.blend + dt / this.blendDur);
     const e = this.blend * this.blend * (3 - 2 * this.blend);
     const cur = {};
@@ -511,23 +456,14 @@ export class Hands {
 
     for (const s of ['R', 'L']) {
       const arm = this[s], t = cur[s];
-      // life: breathing, a pace's swing, the overshoot of a spring, and a tremor that grows with drift
+      // the hands move like a careful old man's: steady, no tremor, no bounce. Each wrist follows its
+      // target critically damped (it arrives without overshooting); the writing hand follows closely
+      // enough that the point stays on the line being drawn. Walking, the arms swing with the pace.
       const tgt = t.pos.clone();
-      tgt.y += Math.sin(this.t * 1.25 + (s === 'R' ? 0 : 0.4)) * 0.0018;
       if (t.swing) tgt.addScaledVector(frames.body.fwd, Math.sin(bob * Math.PI) * 0.05 * t.swing);
-      const tr = 0.0004 + drift * 0.012;
-      tgt.x += (Math.sin(this.t * 23.1 + (s === 'R' ? 0 : 2)) + Math.sin(this.t * 37.7)) * tr * 0.5;
-      tgt.z += (Math.sin(this.t * 29.3 + 1.1) + Math.sin(this.t * 17.9 + (s === 'R' ? 3 : 0))) * tr * 0.5;
       let sp = this.spring[s];
       if (!sp || sp.pos.distanceTo(tgt) > 0.6) sp = this.spring[s] = { pos: tgt.clone(), vel: new THREE.Vector3() };
-      // the writing hand follows the tip exactly (no spring), everything else eases with a little overshoot
-      if (POSES[this.pose][s].tip && e >= 1) { sp.pos.copy(tgt); sp.vel.set(0, 0, 0); }
-      else {
-        const k = 160, c = 2 * Math.sqrt(k) * 0.62;
-        const acc = tgt.clone().sub(sp.pos).multiplyScalar(k).addScaledVector(sp.vel, -c);
-        sp.vel.addScaledVector(acc, Math.min(dt, 0.033));
-        sp.pos.addScaledVector(sp.vel, Math.min(dt, 0.033));
-      }
+      follow(sp, tgt, POSES[this.pose][s].tip ? 34 : 11, dt);
       this.solve(arm, shoulders[s], sp.pos, t.quat, poles[s]);
       this.fingers(arm, t);
       for (const [name, obj] of Object.entries(arm.held)) obj.visible = t.hold === name && this.visible;
@@ -598,6 +534,16 @@ export class Hands {
     tool.updateWorldMatrix(true, false);
     return out.set(0, 0, 0).applyMatrix4(tool.matrixWorld);
   }
+}
+
+// critically damped follow at angular frequency w (exact for a target held still over dt)
+const _d = new THREE.Vector3(), _v = new THREE.Vector3();
+function follow(sp, target, w, dt) {
+  const x0 = _d.copy(sp.pos).sub(target);
+  const ex = Math.exp(-w * dt);
+  const j = _v.copy(sp.vel).addScaledVector(x0, w);          // v0 + w·x0
+  sp.vel.addScaledVector(j, -w * dt).multiplyScalar(ex);       // (v0 − w·j·t)·e^(−wt)
+  sp.pos.copy(target).add(x0.addScaledVector(j, dt).multiplyScalar(ex));
 }
 
 function mixFingers(a, b, e) {

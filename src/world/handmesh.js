@@ -7,7 +7,8 @@
 // finger tips, +Y the back of the hand, -X the thumb side. The keeper is old, so the hand is bony:
 // big knuckles, joints wider than the shafts between them, the tendons and the veins standing up on
 // the back of the hand, hollows between the long bones.
-import * as THREE from 'three';
+// It has no other imports than three's maths (by path, so it can run in a worker too).
+import * as THREE from '../vendor/three/three.module.js';
 
 const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -195,6 +196,82 @@ function cord(field, pts, { r = 1.6, rise = 1.0, wiggle = 0, seed = 0, step = 2.
   const segs = [];
   for (let i = 0; i < out.length - 1; i++) segs.push(capsule(out[i].p, out[i + 1].p, out[i].r, out[i + 1].r));
   return { segs, pts: out };
+}
+
+// ---------------------------------------------------------------------------------------------------
+// The skeleton the skin is built on (hands.js builds the same bones).
+export const UPPER = 0.30, FORE = 0.26;
+
+// Finger knuckles (wrist space), phalanx lengths; `out` is which way a positive spread turns the finger.
+// `fan` is the spread the skin was built at; `nat` the spread a hand at ease falls into.
+export const FINGERS = {
+  index: { base: [-0.026, 0.004, -0.084], len: [0.041, 0.025, 0.020], out: 1, fan: 0.17, nat: 0.04 },
+  middle: { base: [-0.007, 0.006, -0.088], len: [0.045, 0.028, 0.021], out: 0.25, fan: 0.04, nat: 0.0 },
+  ring: { base: [0.012, 0.004, -0.084], len: [0.042, 0.026, 0.020], out: -1, fan: -0.10, nat: -0.035 },
+  little: { base: [0.028, -0.001, -0.074], len: [0.033, 0.021, 0.018], out: -1, fan: -0.24, nat: -0.09 },
+};
+export const FNAMES = ['index', 'middle', 'ring', 'little'];
+// The thumb leaves the palm low on the radial side, angled forward, out and down; its nail turned out.
+export const THUMB = { base: [-0.020, -0.011, -0.020], rest: [-0.32, 0.78, 0.85], len: [0.044, 0.032, 0.027] };
+
+// the arm's bones, in the order the skeleton is built (skin indices refer to these)
+export const BONES = ['shoulder', 'elbow', 'twist', 'wrist', ...FNAMES.flatMap((f) => [f + '1', f + '2', f + '3']), 'thumb1', 'thumb2', 'thumb3'];
+const W0 = -UPPER - FORE;
+function restFrames() {
+  // the right hand's joints at rest, in the wrist's frame (millimetres)
+  const M = {};
+  const mm = (v) => v.map((x) => x * 1000);
+  const at = (parent, pos, euler) => {
+    const m = new THREE.Matrix4().compose(new THREE.Vector3(...pos), new THREE.Quaternion().setFromEuler(new THREE.Euler(...euler, 'YXZ')), new THREE.Vector3(1, 1, 1));
+    return parent ? parent.clone().multiply(m) : m;
+  };
+  for (const f of FNAMES) {
+    const F = FINGERS[f];
+    M[f + '1'] = at(null, mm(F.base), [0, F.fan, 0]);
+    M[f + '2'] = at(M[f + '1'], [0, 0, -F.len[0] * 1000], [0, 0, 0]);
+    M[f + '3'] = at(M[f + '2'], [0, 0, -F.len[1] * 1000], [0, 0, 0]);
+  }
+  M.thumb1 = at(null, mm(THUMB.base), THUMB.rest);
+  M.thumb2 = at(M.thumb1, [0, 0, -THUMB.len[0] * 1000], [0, 0, 0]);
+  M.thumb3 = at(M.thumb2, [0, 0, -THUMB.len[1] * 1000], [0, 0, 0]);
+  return M;
+}
+// Everything the skinned geometry needs, for the right hand (arm space, metres), as transferable arrays.
+export function buildSkinData(h = 1.25) {
+  const boneIndex = (name) => BONES.indexOf(name);
+  const t0 = performance.now();
+  const M = restFrames();
+  const frames = {};
+  const skel = {
+    frame: (name) => (frames[name] ||= frameOf(M[name])),
+    len: { thumb: THUMB.len.map((x) => x * 1000) },
+    bone: boneIndex,
+  };
+  for (const f of FNAMES) skel.len[f] = FINGERS[f].len.map((x) => x * 1000);
+  const H = buildHandField(skel);
+  // the box the skin lies in: the forearm up into the sleeve, out past the finger tips and the thumb
+  const min = [-48, -38, -175], max = [48, 40, 192];
+  for (const name of Object.keys(M)) {
+    const p = new THREE.Vector3().setFromMatrixPosition(M[name]);
+    const tip = new THREE.Vector3(0, 0, -32).applyMatrix4(M[name]);
+    for (const v of [p, tip]) for (let a = 0; a < 3; a++) { min[a] = Math.min(min[a], v.getComponent(a) - 14); max[a] = Math.max(max[a], v.getComponent(a) + 14); }
+  }
+  const mesh = meshField(H.field, { min, max }, h);
+  const { pos, nor, idx } = mesh;
+  const t1 = performance.now();
+  const sk = skinVertices(H, mesh, skel);
+  for (let i = 0; i < pos.length; i += 3) { pos[i] /= 1000; pos[i + 1] /= 1000; pos[i + 2] = pos[i + 2] / 1000 + W0; }
+  const t2 = performance.now();
+  const stats = { verts: pos.length / 3, tris: idx.length / 3, mesh: Math.round(t1 - t0), skin: Math.round(t2 - t1) };
+  return { pos, nor, idx: Uint32Array.from(idx), si: sk.si, sw: sk.sw, tint: sk.tint, tintL: sk.tintL, skin: sk.skin, stats };
+}
+function frameOf(m) {
+  const e = m.elements;
+  return {
+    o: new THREE.Vector3(e[12], e[13], e[14]), x: new THREE.Vector3(e[0], e[1], e[2]).normalize(),
+    y: new THREE.Vector3(e[4], e[5], e[6]).normalize(), z: new THREE.Vector3(e[8], e[9], e[10]).normalize(),
+    at(x, y, z) { return this.o.clone().addScaledVector(this.x, x).addScaledVector(this.y, y).addScaledVector(this.z, z); },
+  };
 }
 
 // ---------------------------------------------------------------------------------------------------

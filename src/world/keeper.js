@@ -1226,7 +1226,6 @@ export class Keeper {
       shoulders: { R: sh(0.17), L: sh(-0.17) },
       poles: { R: pole(0.6), L: pole(-0.6) },
       bob: this.walker.bobT,
-      drift: this.night?.drift || 0,
     });
   }
 
