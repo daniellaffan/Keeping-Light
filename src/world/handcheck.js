@@ -15,12 +15,14 @@
 // props, twist the forearm, and time things.
 import * as THREE from 'three';
 import { buildColliders, outline } from './colliders.js';
+import { classifySkin, LABELS } from './contact.js';
 import { jointAngles, limits, ANATOMY } from './anatomy.js';
 import { CONTACTS, STEADY, THRESH } from './contacts.js';
 import { POSES, POSE_NAMES } from './hands.js';
 import { BONES, FINGERS, FNAMES, THUMB, UPPER, FORE } from './handmesh.js';
 import { glowMaterial } from './materials.js';
 import { solve } from '../game/chart.js';
+import { BOOK } from './book.js';
 
 const MM = 1000;
 const LIM = limits();
@@ -144,55 +146,6 @@ const NONE = [-1, Infinity], FAR = [Infinity, -1];
 const CHUNK = 256;
 
 // ---------------------------------------------------------------------------------------------------
-// Parts of the hand: sets of vertex indices, picked out once on the right hand at rest (the left is its
-// mirror, vertex for vertex). Labels: which bone owns each vertex most.
-const LABELS = ['forearm', 'palm', ...FNAMES.flatMap((f) => [f + '1', f + '2', f + '3']), 'thumb1', 'thumb2', 'thumb3', 'sleeve'];
-function classify(skin) {
-  const arm = skin.arm, inv = arm.skeleton.boneInverses;
-  const n = skin.n, N = skin.N;
-  const label = new Uint8Array(N);
-  const sets = {};
-  const put = (name, v) => (sets[name] ||= []).push(v);
-  const iW = BONES.indexOf('wrist');
-  const v3 = new THREE.Vector3(), n3 = new THREE.Vector3(), w3 = new THREE.Vector3(), m3 = new THREE.Matrix3();
-  for (let v = 0; v < N; v++) {
-    if (v >= n) { label[v] = LABELS.indexOf('sleeve'); continue; }
-    let bi = 0, bw = -1;
-    for (let q = 0; q < 4; q++) if (skin.sw[v * 4 + q] > bw) { bw = skin.sw[v * 4 + q]; bi = skin.si[v * 4 + q]; }
-    const bone = BONES[bi];
-    const lab = bone === 'shoulder' || bone === 'elbow' || bone === 'twist' ? 'forearm' : bone === 'wrist' ? 'palm' : bone;
-    label[v] = LABELS.indexOf(lab);
-    // where the vertex is in its bone's frame and in the wrist's, at rest; its normal in its bone's frame
-    v3.fromArray(skin.rest, v * 3);
-    w3.copy(v3).applyMatrix4(inv[iW]);
-    const loc = v3.clone().applyMatrix4(inv[bi]);
-    n3.fromArray(skin.restN, v * 3).applyMatrix3(m3.setFromMatrix4(inv[bi])).normalize();
-    if (lab === 'forearm') {
-      put('forearm', v);
-      if (n3.y < -0.5 && w3.z > 0.02 && w3.z < 0.16) put('forearm.volar', v);
-      continue;
-    }
-    put('hand', v);
-    if (lab === 'palm') {
-      if (n3.y < -0.6 && w3.z < -0.02 && w3.z > -0.075 && Math.abs(w3.x) < 0.028) put('palm', v);
-      if (n3.y < -0.5 && w3.z < 0 && w3.z > -0.045) put('heel', v);
-    }
-    if ((lab === 'palm' || lab === 'little1') && n3.x > 0.6 && w3.z < 0) put('ulnar', v);
-    const m = /^(index|middle|ring|little|thumb)([123])$/.exec(lab);
-    if (m) {
-      const f = m[1], k = +m[2];
-      const len = f === 'thumb' ? THUMB.len[k - 1] : FINGERS[f].len[k - 1];
-      if (n3.y < -0.5) put(`pad.${f}.${k}`, v);
-      const last = f === 'thumb' ? k === 3 : k === 3;
-      if (last && loc.z < -0.4 * len && (n3.y < -0.25 || n3.z < -0.6)) put('tip.' + f, v);
-      if (f === 'middle' && k >= 2 && n3.x < -0.5) put('side.middle', v);
-    }
-  }
-  for (const k of Object.keys(sets)) sets[k] = Int32Array.from(sets[k]);
-  return { label, sets };
-}
-
-// ---------------------------------------------------------------------------------------------------
 export function installHandCheck(game) {
   const k = game.keeper, hands = k.hands;
   let colliders = null, skins = null, parts = null;
@@ -202,9 +155,10 @@ export function installHandCheck(game) {
 
   function boot() {
     if (colliders) return;
-    colliders = buildColliders(k);
+    // the same colliders the hands' solver uses
+    colliders = hands.contact ? hands.contact.ob.all : buildColliders(k);
     skins = { R: new Skin(hands.R), L: new Skin(hands.L) };
-    parts = classify(skins.R);
+    parts = classifySkin(hands.R);
     for (const s of ['R', 'L']) {
       depth[s] = new Float32Array(skins[s].N);
       skins[s].all = Int32Array.from({ length: skins[s].N }, (_, i) => i);
@@ -279,7 +233,7 @@ export function installHandCheck(game) {
           if (dx * dx + dy * dy + dz * dz > r * r) continue;
           // the distance past a face never changes faster than the point moves: if the run's middle is
           // further outside than the run is wide, all of it is outside
-          if (q < nc) { if (cand[q].sd(mx, my, mz) > hd) continue; pl.push(cand[q]); } else { const f = fields[q - nc]; if (f.f(mx, my, mz, false) > hd) continue; fl.push(f); }
+          if (q < nc) { if (cand[q].sd(mx, my, mz) > hd) continue; pl.push(cand[q]); } else { const f = fields[q - nc]; if (f.f(mx, my, mz, hd) > hd) continue; fl.push(f); }
         }
         if (!pl.length && !fl.length) continue;
         for (let v = ch * CHUNK, ve = Math.min(sk.N, v + CHUNK); v < ve; v++) {
@@ -292,7 +246,7 @@ export function installHandCheck(game) {
             const v2 = p.sd(lx, ly, lz);
             if (v2 < d) d = v2;
           }
-          for (let q = 0; q < fl.length; q++) { const v2 = fl[q].f(lx, ly, lz, true); if (v2 < d) d = v2; }
+          for (let q = 0; q < fl.length; q++) { const v2 = fl[q].f(lx, ly, lz, 0); if (v2 < d) d = v2; }
           if (d < 0) {
             const dm = -d * MM;
             if (dm > D[v]) D[v] = dm;
@@ -375,6 +329,11 @@ export function installHandCheck(game) {
       for (const C of P[s] || []) {
         if (C.when && !ctx[C.when]) continue;
         const id = s + ': ' + C.id;
+        if (C.clear) {
+          const g = intrusion(s, C.drawing) * MM;
+          out.push([id, g, C.tol, g <= C.tol]);
+          continue;
+        }
         if (C.nib || C.route) {
           const tool = heldTool();
           if (!tool) { out.push([id, null, C.tol, false]); continue; }
@@ -394,6 +353,33 @@ export function installHandCheck(game) {
       }
     }
     return out;
+  }
+  // How far (m) this arm's skin comes in over the logbook's pages, within 15 cm above them: the
+  // distance of the deepest vertex inside the pages' edge. Drawing, the hand may be over the page below
+  // and to the right of its point (as it is seen, leaning over the book), and only there.
+  const _bk = new THREE.Matrix4();
+  function intrusion(s, drawing) {
+    const b = k.book, B = BOOK;
+    const [x0, x1, z0, z1] = b.single ? [-430 * b.singleScale, 430 * b.singleScale, (16 - 626) * b.singleScale, (1236 - 626) * b.singleScale]
+      : [(B.PAGE_L.x - 800) * B.S, (B.PAGE_L.x + 2 * B.PAGE_L.w - 800) * B.S, (B.PAGE_L.y - 500) * B.S, (B.PAGE_L.y + B.PAGE_L.h - 500) * B.S];
+    b.group.updateWorldMatrix(true, false);
+    const e = _bk.copy(b.group.matrixWorld).invert().elements;
+    let tx = Infinity, tz = Infinity;
+    if (drawing) {
+      const t = k.tip, lx = e[0] * t.x + e[4] * t.y + e[8] * t.z + e[12], lz = e[2] * t.x + e[6] * t.y + e[10] * t.z + e[14];
+      tx = lx - 0.01; tz = lz - 0.01;
+    }
+    const P = skins[s].pos, N = skins[s].N;
+    let worst = 0;
+    for (let v = 0; v < N; v += 2) {
+      const o = v * 3, x = P[o], y = P[o + 1], z = P[o + 2];
+      const lx = e[0] * x + e[4] * y + e[8] * z + e[12], ly = e[1] * x + e[5] * y + e[9] * z + e[13], lz = e[2] * x + e[6] * y + e[10] * z + e[14];
+      if (ly > 0.15 || lx <= x0 || lx >= x1 || lz <= z0 || lz >= z1) continue;
+      if (lx >= tx && lz >= tz) continue;
+      const d = Math.min(lx - x0, x1 - lx, lz - z0, z1 - lz);
+      if (d > worst) worst = d;
+    }
+    return worst;
   }
   function heldTool() {
     const p = POSES[hands.pose]?.R;
@@ -560,6 +546,7 @@ export function installHandCheck(game) {
       lever: review || (k.state === 'light' && k.st >= 1.3),
       // from when the door starts to open until the hand lets go of the ring
       ring: review || (k.state === 'door' && k.st >= 0.85 && k.st < 1.6),
+      book: review || ['lean', 'lean-in', 'lean-out', 'closing'].includes(k.state),
     };
   }
   // run frames, measuring each: until(t) → true to stop
@@ -640,16 +627,23 @@ export function installHandCheck(game) {
     // turn a page back and forward again; ink the plan (pencil down, inkwell in, quill out, dip, draw,
     // quill back); stand and pull the lamp lever through its whole travel; go to the chair; a sip from
     // the mug; then dawn: up out of the chair to the book, and close it.
-    dusk({ upTo = null } = {}) {
+    dusk({ upTo = null, only = null } = {}) {
       boot();
       const sc = k.book.scene, b = k.book, P = phases();
       lastBody = null;
       for (let i = 0; i < 20; i++) step(1 / 30);
+      const last = only ? only[only.length - 1] : upTo;
       const phase = (name, prop, dt, opts) => {
+        if (only && !only.includes(name)) {
+          // played through as the game would, unmeasured
+          let t = 0;
+          for (let i = 0; i < (opts.max || 20000); i++) { opts.onFrame?.(t, i); step(dt); t += dt; if (opts.until(t, i)) break; }
+          return false;
+        }
         const R = P.start(name, prop);
         run(R, { dt, seg: segName, prop: PROPS[prop], ...opts });
         P.end();
-        return upTo === name;
+        return last === name;
       };
       k.setState('lean-in');
       if (phase('lean in', 'none', 1 / 60, { until: () => k.state === 'lean' && hands.blend >= 1 && k.st > 0.6 })) return P.out;
@@ -680,8 +674,7 @@ export function installHandCheck(game) {
       if (phase('rise', 'none', 1 / 60, { until: () => k.state === 'lean' && hands.blend >= 1 && k.st > 0.6, max: 40000 })) return P.out;
       sc.closeBook();
       phase('close', 'cover', 1 / 150, { until: () => k.state !== 'closing', max: 40000 });
-      P.out.still = { lean: still, chair: stillChair };
-      return P.out;
+      return { phases: P.out, still: { lean: still, chair: stillChair } };
     },
     // the day: the hand takes the door's ring and pulls it open
     door() {

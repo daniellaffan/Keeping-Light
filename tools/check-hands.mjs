@@ -18,6 +18,8 @@
 //   --shot-prefix N  their file names, e.g. "45-hands" (default: hands-check)
 //   --jobs N         pages run at once (default 3)
 //   --report NAME    measure nothing: judge docs/hands-check/NAME.json again, print and write its tables
+//   --focus NAME     just one interaction (any part of its name: "lever", "pencil"...): its holds, its
+//                    phases of the dusk (the rest played through unmeasured), its sweeps and two nudges
 import { spawn } from 'child_process';
 import { createRequire } from 'module';
 import fs from 'fs';
@@ -35,6 +37,7 @@ const SHOTS = !!opt('shots', false);
 const SHOT_PREFIX = opt('shot-prefix', 'hands-check');
 const JOBS = +opt('jobs', 3);
 const ONLY = opt('only') ? String(opt('only')).split(',') : null;
+const FOCUS = opt('focus') ? String(opt('focus')) : null;
 const TESTS = ['penetration', 'contact', 'motion', 'joints', 'twist', 'fuzz', 'stability', 'speed', 'visual'];
 const want = (t) => !ONLY || ONLY.some((o) => o === t || o === String(TESTS.indexOf(t) + 1));
 
@@ -99,7 +102,34 @@ const NUDGES = QUICK
   : [{ book: [0.03, 0, 0] }, { book: [-0.03, 0, 0] }, { book: [0, 0.03, 0] }, { book: [0, -0.03, 0] }, { book: [0, 0, 0.05] }, { book: [0, 0, -0.05] },
     { well: [0.03, 0] }, { well: [-0.03, 0] }, { well: [0, 0.03] }, { well: [0, -0.03] }];
 
+// one interaction's scenarios only
+async function measureFocus() {
+  const D = { focus: FOCUS };
+  const I = INTERACTIONS.filter(([n]) => n.includes(FOCUS)).map(([, i]) => i);
+  if (!I.length) throw new Error(`no interaction matches "${FOCUS}"`);
+  const holds = [...new Set(I.flatMap((i) => i.holds))], phases = [...new Set(I.flatMap((i) => i.phases))];
+  const sweeps = [...new Set(I.flatMap((i) => i.sweeps || []))], nudges = I.some((i) => i.nudges), night = I.some((i) => i.night);
+  const jobs = [];
+  jobs.push(async () => { const p = await page(DUSK); D.holds = await evalIn(p, (hs) => { const H = window.__handcheck, o = {}; for (const pose of hs) o[pose] = H.hold(pose); return o; }, holds); await p.close(); });
+  const duskPh = phases.filter((ph) => ph !== 'door' && ph !== 'stairs');
+  if (duskPh.length) jobs.push(async () => { const p = await page(DUSK); D.dusk = await evalIn(p, (only) => window.__handcheck.scenario('dusk', { only }), duskPh); await p.close(); });
+  if (phases.includes('door')) jobs.push(async () => { const p = await page('night=5&phase=day'); D.door = await evalIn(p, () => window.__handcheck.scenario('door')); await p.close(); });
+  if (phases.includes('stairs')) jobs.push(async () => { const p = await page('finale=stairs'); D.stairs = await evalIn(p, () => window.__handcheck.scenario('stairs')); await p.close(); });
+  if (night) jobs.push(async () => { const p = await page('autoplay=1&speed=1&night=5&phase=day'); D.night = await evalIn(p, () => window.__handcheck.scenario('night')); await p.close(); });
+  const g = { nx: 12, ny: 8 };
+  for (const sw of sweeps) jobs.push(async () => {
+    const [pose, mode] = sw.split(' ');
+    const p = await page(DUSK, mode === 'portrait' ? { width: 390, height: 844 } : undefined);
+    (D.sweeps ||= {})[sw] = await evalIn(p, ([pose, g]) => window.__handcheck.sweep(pose, g), [pose, g]);
+    await p.close();
+  });
+  if (nudges) { D.nudges = []; for (const n of NUDGES.slice(0, 2)) jobs.push(async () => { const p = await page(DUSK); D.nudges.push({ nudge: n, res: await evalIn(p, (n) => window.__handcheck.nudged(n), n) }); await p.close(); }); }
+  await pool(jobs, JOBS);
+  return D;
+}
+
 async function measureAll() {
+  if (FOCUS) return measureFocus();
   const D = {};
   const jobs = [];
   const need = (...t) => t.some(want);
@@ -158,7 +188,8 @@ const INTERACTIONS = [
 ];
 const MOVING = { 'page turn': ['turn back', 'turn forward'], cover: ['close'], 'lamp lever': ['lamp'], 'door ring': ['door'], mug: ['mug'], 'stair rail': ['stairs'], 'quill and inkwell': ['ink'] };
 
-function phasesOf(D) { const out = {}; for (const r of [...(D.dusk || []), ...(D.door || []), ...(D.stairs || [])]) out[r.name] = r; return out; }
+const duskPhases = (d) => (Array.isArray(d) ? d : d?.phases || []);
+function phasesOf(D) { const out = {}; for (const r of [...duskPhases(D.dusk), ...(D.door || []), ...(D.stairs || [])]) out[r.name] = r; return out; }
 
 // the worst of a set of recorded results
 function worst(results) {
@@ -188,8 +219,9 @@ function judge(D) {
   const rows = [], inter = [];
   const holds = D.holds || {};
   const all = [...Object.values(holds), ...Object.values(P), ...(D.night ? [D.night] : [])];
-  // per interaction
+  // per interaction (focused: just those)
   for (const [name, I] of INTERACTIONS) {
+    if (D.focus && !name.includes(D.focus)) continue;
     const res = [...I.holds.map((h) => holds[h]), ...I.phases.map((ph) => P[ph]), ...(I.sweeps || []).map((s) => D.sweeps?.[s]), ...(I.nudges ? (D.nudges || []).map((n) => n.res) : []), ...(I.night || []).map((p) => D.night?.byPose?.[p])].filter(Boolean);
     const w = worst(res);
     const pens = maxPen(w), fails = failedCon(w);
@@ -215,7 +247,7 @@ function judge(D) {
     const fails = failedCon(worst([...Object.values(holds), ...Object.values(P)]));
     rows.push(['2 contact', !fails.length, fails.length ? `${fails.length} contacts out of tolerance; e.g. ${fails[0][0]} ${fails[0][1].worst === Infinity ? 'none' : fails[0][1].worst.toFixed(1) + ' mm'} (${fails[0][1].src})` : 'all within tolerance']);
   }
-  if (want('motion')) {
+  if (want('motion') && !D.focus) {
     const bad = [];
     for (const [name, phs] of Object.entries(MOVING)) for (const ph of phs) {
       const r = P[ph];
@@ -244,7 +276,7 @@ function judge(D) {
     const ok = (!pm || pm[1].max <= THRESH.penetrationMm) && !cf.length && !w.ang.out.length;
     rows.push(['6 fuzz', ok, `${res.reduce((a, r) => a + r.frames, 0)} placements/frames; worst ${pm ? pm[0] + ' ' + pm[1].max.toFixed(1) + ' mm (' + pm[1].src + ')' : 'none'}; ${cf.length} contacts failing; ${w.ang.out.length} joints out`]);
   }
-  if (want('stability')) {
+  if (want('stability') && !D.focus) {
     const still = Object.entries(holds).map(([p, h]) => [p, h.stillMm]).concat(D.duskStill ? [['lean (breathing)', D.duskStill.lean], ['chair (breathing)', D.duskStill.chair]] : []);
     const moving = still.filter(([, v]) => v > THRESH.holdMm);
     const same = D.repeat ? D.repeat[0] === D.repeat[1] : null;
@@ -256,7 +288,7 @@ function judge(D) {
     const grow = base ? D.skinBuild.mainThreadMs / base : 1;
     rows.push(['8 speed', worstMean <= BUDGET.handsMs && grow <= BUDGET.skinBuildGrowth, `hands update ${worstMean.toFixed(3)} ms/frame worst mean (budget ${BUDGET.handsMs} ms, proposed); skin build ${D.skinBuild.mainThreadMs} ms here, ${D.skinBuild.worker.mesh + D.skinBuild.worker.skin} ms in the worker${base ? ` (baseline ${base} ms)` : ''}`]);
   }
-  if (want('visual')) rows.push(['9 visual', !!D.overlayKey, `overlay key O ${D.overlayKey ? 'works' : 'FAILED'}; ${D.shots ? `contact sheet ${D.shots.sheet}, joint plots ${D.shots.plot}` : 'sheets and plots not rendered (--shots)'}`]);
+  if (want('visual') && !D.focus) rows.push(['9 visual', !!D.overlayKey, `overlay key O ${D.overlayKey ? 'works' : 'FAILED'}; ${D.shots ? `contact sheet ${D.shots.sheet}, joint plots ${D.shots.plot}` : 'sheets and plots not rendered (--shots)'}`]);
   return { rows, inter };
 }
 

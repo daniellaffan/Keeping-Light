@@ -122,21 +122,26 @@ const ringOf = (pos, idxs) => idxs.map((i) => new THREE.Vector3().fromBufferAttr
 function solidsOf(geo) {
   const pos = geo.attributes.position, P = geo.parameters || {};
   const out = { parts: [], probes: [] };
-  const ringPairs = (rings, closedEnds = true) => {
+  const ringPairs = (rings, closedEnds = true, loop = false) => {
+    // thin: probes along the middle, a couple of millimetres apart, with the solid's depth there (but
+    // never deeper than the way to its ends, if it has ends, so no ball stands out past one)
+    const pr = [];
+    let len = 0;
     for (let i = 0; i < rings.length - 1; i++) {
       const s = ringSolid(rings[i], rings[i + 1]);
       out.parts.push(s);
-      // thin: probes along the middle, a couple of millimetres apart, with the solid's depth there
-      const ca = mid(rings[i]), cb = mid(rings[i + 1]);
+      const ca = mid(rings[i]), cb = mid(rings[i + 1]), l = ca.distanceTo(cb);
       const ra = meanR(rings[i], ca), rb = meanR(rings[i + 1], cb);
       if (Math.max(ra, rb) < 0.03) {
-        const steps = Math.max(1, Math.ceil(ca.distanceTo(cb) / 0.002));
+        const steps = Math.max(1, Math.ceil(l / 0.002));
         for (let j = 0; j < steps; j++) {
           const t = j / steps;
-          out.probes.push(ca.x + (cb.x - ca.x) * t, ca.y + (cb.y - ca.y) * t, ca.z + (cb.z - ca.z) * t, (ra + (rb - ra) * t) * Math.cos(Math.PI / rings[i].length));
+          pr.push([ca.x + (cb.x - ca.x) * t, ca.y + (cb.y - ca.y) * t, ca.z + (cb.z - ca.z) * t, (ra + (rb - ra) * t) * Math.cos(Math.PI / rings[i].length), len + l * t]);
         }
       }
+      len += l;
     }
+    for (const [x, y, z, r, at] of pr) out.probes.push(x, y, z, loop ? r : Math.min(r, at, len - at));
     if (closedEnds && rings.length) { const c = mid(rings[rings.length - 1]); out.probes.push(c.x, c.y, c.z, 0); }
   };
   switch (geo.type) {
@@ -165,14 +170,14 @@ function solidsOf(geo) {
       const rs = P.radialSegments, ts = P.tubularSegments;
       const rings = [];
       for (let i = 0; i <= ts; i++) rings.push(ringOf(pos, Array.from({ length: rs }, (_, j) => j * (ts + 1) + i)));
-      ringPairs(rings, false);
+      ringPairs(rings, false, (P.arc ?? Math.PI * 2) > Math.PI * 2 - 1e-6);
       break;
     }
     case 'TubeGeometry': {
       const rs = P.radialSegments, ts = P.tubularSegments;
       const rings = [];
       for (let i = 0; i <= ts; i++) rings.push(ringOf(pos, Array.from({ length: rs }, (_, j) => i * (rs + 1) + j)));
-      ringPairs(rings, false);
+      ringPairs(rings, false, !!P.closed);
       break;
     }
     case 'LatheGeometry': {
@@ -210,11 +215,16 @@ function boxProbes(pts, out) {
   const [thin, u, v] = e;
   if (thin.length() >= 0.02) return;
   const step = u.length() * v.length() > 0.05 ? 0.01 : 0.004;
-  const nu = Math.max(1, Math.round(u.length() / step)), nv = Math.max(1, Math.round(v.length() / step));
-  const base = c.clone().addScaledVector(u, -0.5).addScaledVector(v, -0.5);
+  // (each probe is a ball as thick as the box, so the sheet stops that far inside its edges: a ball on
+  // the very edge would stand out past it)
+  const r = thin.length() / 2, lu = u.length(), lv = v.length();
+  const su = Math.max(0, lu - 2 * r), sv = Math.max(0, lv - 2 * r);
+  const nu = Math.max(1, Math.round(su / step)), nv = Math.max(1, Math.round(sv / step));
+  const U = u.clone().multiplyScalar(su / lu), V = v.clone().multiplyScalar(sv / lv);
+  const base = c.clone().addScaledVector(U, -0.5).addScaledVector(V, -0.5);
   for (let i = 0; i <= nu; i++) for (let j = 0; j <= nv; j++) {
-    const p = base.clone().addScaledVector(u, i / nu).addScaledVector(v, j / nv);
-    out.push(p.x, p.y, p.z, thin.length() / 2);
+    const p = base.clone().addScaledVector(U, i / nu).addScaledVector(V, j / nv);
+    out.push(p.x, p.y, p.z, r);
   }
 }
 
@@ -242,7 +252,7 @@ export class Collider {
     this.name = name;
     this.follow = follow;         // Object3D whose space the shapes are in (null: the world)
     this.parts = [];              // Convex
-    this.fields = [];             // { f(x, y, z) → sd, c: [x, y, z], r, on: () => bool }
+    this.fields = [];             // { f(x, y, z, cut) → sd (≥ cut may come back as just "cut or more"), c: [x, y, z], r, on }
     this.probes = [];             // x, y, z, r in the followed object's space
     this.sheet = null;            // () → probes made fresh each frame (the bending leaf)
     this.m = new THREE.Matrix4();
@@ -294,7 +304,7 @@ export class Collider {
     }
     for (const f of this.fields) {
       if (f.on && !f.on()) continue;
-      const v = f.f(x, y, z, cull <= 0);
+      const v = f.f(x, y, z, Math.min(s, cull));
       if (v < s) s = v;
     }
     return s;
@@ -346,10 +356,10 @@ export function buildColliders(keeper) {
   const x0 = (B.COVER.x - 800) * B.S, x1 = (B.COVER.x + B.COVER.w - 800) * B.S;
   const z0 = (B.COVER.y - 500) * B.S, z1 = (B.COVER.y + B.COVER.h - 500) * B.S;
   const H = (x, z) => spreadHeight(x / B.S + 800, z / B.S + 500);
-  bk.fields.push({ f: (x, y, z, io) => block(x, y, z, x0, x1, z0, z1, H, io), c: [0, 0.015, (z0 + z1) / 2], r: Math.hypot(x1 - x0, z1 - z0) / 2 + 0.02, on: () => !book.single });
+  bk.fields.push({ f: (x, y, z, cut) => block(x, y, z, x0, x1, z0, z1, H, cut), c: [0, 0.015, (z0 + z1) / 2], r: Math.hypot(x1 - x0, z1 - z0) / 2 + 0.02, on: () => !book.single });
   const ss = book.singleScale, sx0 = -430 * ss, sx1 = 430 * ss, sz0 = (16 - 626) * ss, sz1 = (1236 - 626) * ss;
   const Hs = (x) => 0.034 + 0.003 * (1 - Math.pow(Math.min(1, Math.abs(x) / sx1), 2));
-  bk.fields.push({ f: (x, y, z, io) => block(x, y, z, sx0, sx1, sz0, sz1, Hs, io), c: [0, 0.02, 0], r: Math.hypot(sx1 - sx0, sz1 - sz0) / 2 + 0.02, on: () => book.single });
+  bk.fields.push({ f: (x, y, z, cut) => block(x, y, z, sx0, sx1, sz0, sz1, Hs, cut), c: [0, 0.02, 0], r: Math.hypot(sx1 - sx0, sz1 - sz0) / 2 + 0.02, on: () => book.single });
   meshes('cover', book.coverLid);
   const leaf = get('leaf', book.leaf);
   leaf.sheet = () => {
@@ -373,9 +383,10 @@ export function buildColliders(keeper) {
   const wa = Math.asin(W.half / R) / DEG, da = Math.asin(D.half / R) / DEG;
   const walls = get('walls', keeper.room.group);
   walls.fields.push({
-    f: (x, y, z, inside) => {
+    f: (x, y, z, cut = Infinity) => {
       const r = Math.hypot(x, z);
-      if (inside && r < R && y > 0 && y < ROOM.H) return 1;
+      // well inside the room: how far to the nearest of wall, floor and ceiling is all that matters
+      if (R - r > cut && y > cut && ROOM.H - y > cut) return Math.min(R - r, y, ROOM.H - y);
       const a = ((Math.atan2(x, -z) / DEG) + 360) % 360;
       const off = (deg) => Math.abs(((a - deg + 540) % 360) - 180);
       // into the wall's thickness (the window and the door are holes through it)
@@ -390,15 +401,22 @@ export function buildColliders(keeper) {
   return [...out.values()].filter((c) => c.parts.length || c.fields.length || c.probes.length || c.sheet);
 }
 
-// a solid block under a height field: x0..x1, z0..z1, from the table up to h(x, z). `inside`: only
-// the depth matters (anything outside may come back as just "outside")
-function block(x, y, z, x0, x1, z0, z1, h, inside = false) {
+// a solid block under a height field: x0..x1, z0..z1, from the table up to h(x, z) (never above 4 cm).
+// Further than `cut` outside, it may come back as just "that far or more"
+function block(x, y, z, x0, x1, z0, z1, h, cut = Infinity) {
   const dx = Math.max(x0 - x, x - x1), dz = Math.max(z0 - z, z - z1);
-  if (inside && (dx > 0 || dz > 0 || y > 0.045 || y < 0)) return 1;
+  if (dx > cut || dz > cut) return Math.max(dx, dz);
+  if (y - 0.04 > cut) return y - 0.04;
+  if (-y > cut) return -y;
   const xc = Math.min(x1, Math.max(x0, x)), zc = Math.min(z1, Math.max(z0, z));
   const top = h(xc, zc), e = 0.001;
-  const gx = (h(xc + e, zc) - h(xc - e, zc)) / (2 * e), gz = (h(xc, zc + e) - h(xc, zc - e)) / (2 * e);
-  const dy = (y - top) / Math.sqrt(1 + gx * gx + gz * gz), db = -y;
+  // near the surface, the height over it measured square to its slope; further off, just the height
+  let dy = y - top;
+  if (Math.abs(dy) < 0.02) {
+    const gx = (h(xc + e, zc) - h(xc - e, zc)) / (2 * e), gz = (h(xc, zc + e) - h(xc, zc - e)) / (2 * e);
+    dy /= Math.sqrt(1 + gx * gx + gz * gz);
+  }
+  const db = -y;
   if (dx <= 0 && dz <= 0 && dy <= 0 && db <= 0) return Math.max(dx, dz, dy, db);
   const ox = Math.max(dx, 0), oz = Math.max(dz, 0), oy = Math.max(dy, db, 0);
   return Math.sqrt(ox * ox + oy * oy + oz * oz);

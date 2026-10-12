@@ -17,9 +17,15 @@ import { quill } from './inkwell.js';
 import { knitTex } from './textures.js';
 
 import { UPPER, FORE, FINGERS, FNAMES, THUMB, buildSkinData } from './handmesh.js';
+import { ANATOMY } from './anatomy.js';
+import { ContactSolver, THUMB_CURL, CURL } from './contact.js';
+import { GRIPS } from './contacts.js';
 
 const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const lerp = (a, b, t) => a + (b - a) * t;
+const smooth01 = (x) => x * x * (3 - 2 * x);
+const onTable = (p) => p?.frame === 'book';
+const LIFT = 0.06;     // how high a hand rises over the table's edge, on its way onto it or off it (m)
 
 // The skin is built once, for the right hand at rest, and shared (mirrored) by both arms. Building it
 // takes a second or so, so the game starts it in a worker as it boots (prepareSkin) and waits for it
@@ -301,7 +307,7 @@ export const POSES = {
   // leaning over the book: both hands flat on the table either side of it, never on the pages; the
   // finger tips at most on the leather beyond them
   lean: {
-    R: hand(FLAT, { frame: 'book', pos: [0.405, 0.024, 0.12], rot: [0.0, 0.32, 0.03] }),
+    R: hand(FLAT, { frame: 'book', pos: [0.43, 0.024, 0.23], rot: [0.0, 0.32, 0.03] }),
     L: hand(FLAT, { frame: 'book', pos: [-0.405, 0.024, 0.12], rot: [0.0, 0.05, -0.03] }),
   },
   // ready to write: the same, the pencil lying in the right hand, which rests on its little-finger side
@@ -333,7 +339,7 @@ export const POSES = {
   // closing the book at dawn: the left hand pinches the cover's edge (thumb on top) and lifts it until
   // it stands up; then lets it fall shut and goes back beside the book (the keeper decides when)
   close: {
-    R: hand(FLAT, { frame: 'book', pos: [0.405, 0.024, 0.12], rot: [0.0, 0.32, 0.03] }),
+    R: hand(FLAT, { frame: 'book', pos: [0.43, 0.024, 0.23], rot: [0.0, 0.32, 0.03] }),
     L: hand(FLAT, { frame: 'lid', pos: [-0.031, -0.006, 0.0], at: [0.004, -0.012, -0.165], rot: [-0.1, -0.22, -0.7],
       fingers: { index: [0.04, 0.3, 0.35, 0.2], middle: [0, 0.32, 0.38, 0.22], ring: [0.04, 0.36, 0.4, 0.24], little: [0.1, 0.4, 0.44, 0.26] }, thumb: [0.1, 0.15, 0.1, 0.15, 0.2] }),
   },
@@ -428,6 +434,7 @@ export class Hands {
     this.visible = true;
     // per-hand springs on the wrist target: a little overshoot when they move
     this.spring = { R: null, L: null };
+    this.contact = null;
     this.frames = {};
     this.tip = null;          // world point for the writing tip
     this.lift = 0;            // tip lifted off the page (0 pressed .. 1 hovering)
@@ -436,6 +443,7 @@ export class Hands {
   setPose(name, dur = 0.55) {
     if (!POSES[name] || name === this.pose) return;
     this.from = this.snapshot || null;
+    this.fromPose = this.pose;
     this.pose = name;
     this.blend = 0; this.blendDur = dur;
   }
@@ -493,6 +501,9 @@ export class Hands {
     return { pos, quat: wq, fingers: p.fingers, thumb: p.thumb, hold: p.hold, swing: p.swing || 0, lead: p.align ? 0 : 1 };
   }
 
+  // the contact solver (contact.js), given the room's colliders by the keeper
+  attach(colliders) { this.contact = new ContactSolver(this, colliders); }
+
   // frames: { body: {pos, quat}, book: {...}, ... }; shoulders: { R: Vector3, L: Vector3 } world; pole dirs
   update(dt, frames, { shoulders, poles, bob = 0 }) {
     this.t += dt;
@@ -513,75 +524,144 @@ export class Hands {
           swing: lerp(a.swing, now.swing, e),
           lead: lerp(a.lead ?? 1, now.lead, e),
         };
+        // onto the table or off it, the hand rises first and comes down last, so it goes over the
+        // table's edge, not through it
+        if (onTable(POSES[this.pose][s]) !== onTable(POSES[this.fromPose]?.[s])) {
+          const ev = now.pos.y > a.pos.y ? 1 - (1 - e) ** 4 : e ** 4;
+          t.pos.y = lerp(a.pos.y, now.pos.y, ev) + Math.sin(Math.PI * e) * LIFT;
+        }
       }
       cur[s] = t;
     }
     this.snapshot = cur;
-    // the arms ride with the body: whatever it did since last frame (stepped, turned, stood up), the
-    // hands are carried along, and only their movement relative to it is eased
     const body = frames.body;
     // a cut (the camera carried somewhere else at once): the hands are simply where they belong
     if (this.lastBody && (body.pos.distanceTo(this.lastBody.pos) > 0.5 || body.quat.angleTo(this.lastBody.quat) > 1.0)) {
       this.lastBody = null; this.from = null; this.blend = 1;
       this.spring = { R: null, L: null };
-      for (const a of [this.R, this.L]) { a.pp = null; a.roll = null; }
+      for (const a of [this.R, this.L]) { a.pp = null; a.roll = null; a.curl = null; }
       for (const s of ['R', 'L']) cur[s] = this.resolve(POSES[this.pose][s], s, frames, shoulders[s], poles[s]);
     }
-    if (this.lastBody) {
-      const turn = body.quat.clone().multiply(this.lastBody.quat.clone().invert());
-      for (const s of ['R', 'L']) {
-        const sp = this.spring[s];
-        if (!sp) continue;
-        sp.pos.sub(this.lastBody.pos).applyQuaternion(turn).add(body.pos);
-        sp.vel.applyQuaternion(turn);
-        this[s].pp?.applyQuaternion(turn);
+    // What carries each hand's follower. A hand settled in a pose rides with that pose's frame (the
+    // book, the lever, the door's ring, the inkwell...), so it stays on what it holds as that moves and
+    // is still while it doesn't, whatever the body does. A hand posed on the body rides with the body:
+    // whatever it did since last frame (stepped, turned, stood up), the hand is carried along, and only
+    // its movement relative to it is eased. Between poses it rides with both ends' frames, the one it's
+    // leaving at first and the one it's going to by the end (a hand coming down onto the book isn't
+    // dragged into the table by the body leaning in over it).
+    const carry = (name, sp, w, out) => {
+      const F = name === 'body' ? body : frames[name], last = this.lastFrames?.[name];
+      if (!F || !last) return out.add(_v.copy(sp.pos).multiplyScalar(w));
+      const d = _q1.copy(F.quat).multiply(_q2.copy(last.quat).invert());
+      return out.add(_v.copy(sp.pos).sub(last.pos).applyQuaternion(d).add(F.pos).multiplyScalar(w));
+    };
+    for (const s of ['R', 'L']) {
+      const sp = this.spring[s];
+      if (!sp || !this.lastFrames) continue;
+      const to = POSES[this.pose][s].frame || 'body', from = (this.from && this.blend < 1 && POSES[this.fromPose]?.[s]?.frame) || 'body';
+      const w = this.from && this.blend < 1 ? e : 1;
+      const p = new THREE.Vector3();
+      carry(to, sp, w, p);
+      if (w < 1) carry(from, sp, 1 - w, p);
+      // (its pace and its elbow turned as the frame that carries it most turned)
+      const main = w >= 0.5 ? to : from, F = main === 'body' ? body : frames[main], last = this.lastFrames[main];
+      if (F && last) {
+        const d = _q1.copy(F.quat).multiply(_q2.copy(last.quat).invert());
+        sp.vel.applyQuaternion(d);
+        this[s].pp?.applyQuaternion(d);
       }
+      sp.pos.copy(p);
     }
+    this.lastFrames = { body: { pos: body.pos.clone(), quat: body.quat.clone() } };
+    for (const [name, F] of Object.entries(frames)) if (F && F.pos && F.quat && name !== 'body') this.lastFrames[name] = { pos: F.pos.clone(), quat: F.quat.clone() };
     this.lastBody = { pos: body.pos.clone(), quat: body.quat.clone() };
 
+    this.contact?.frame();
     for (const s of ['R', 'L']) {
-      const arm = this[s], t = cur[s];
+      const arm = this[s], t = cur[s], P = POSES[this.pose][s];
       // the hands move like a careful old man's: steady, no tremor, no bounce. Each wrist follows its
-      // target critically damped (it arrives without overshooting); the writing hand follows closely
-      // enough that the point stays on the line being drawn. Walking, the arms swing with the pace.
+      // target critically damped (it arrives without overshooting). The writing hand, once it is in its
+      // pose, puts the point exactly where it's drawing, only never faster than a hand moves (a tap
+      // across the page is a quick reach, not a jump). Walking, the arms swing with the pace.
       const tgt = t.pos.clone();
       if (t.swing) tgt.addScaledVector(frames.body.fwd, Math.sin(bob * Math.PI) * 0.05 * t.swing);
       let sp = this.spring[s];
       if (!sp || sp.pos.distanceTo(tgt) > 0.6) sp = this.spring[s] = { pos: tgt.clone(), vel: new THREE.Vector3() };
-      follow(sp, tgt, POSES[this.pose][s].tip ? 34 : 11, dt);
-      this.solve(arm, shoulders[s], sp.pos, t.quat, poles[s], dt, t.lead ?? 1);
+      const tip = P.tip && this.tip && this.blend >= 1;
+      if (tip) {
+        const d = tgt.clone().sub(sp.pos), l = d.length(), max = 1.5 * dt;
+        sp.pos.addScaledVector(d, l > max ? max / l : 1);
+        sp.vel.set(0, 0, 0);
+      } else follow(sp, tgt, P.tip ? 34 : 11, dt);
+      const T = sp.pos.clone();
+      this.solve(arm, shoulders[s], T, t.quat, poles[s], dt, t.lead ?? 1);
+      // a tool's point exactly where it's asked: if the wrist couldn't turn as far as the pose wanted
+      // (held in its range), the point would be carried off, so the hand is moved to put it back
+      if (tip) {
+        const gp = this.grips[P.hold], at = sp.pos.clone().add(gp.pos.clone().applyQuaternion(t.quat));
+        for (let i = 0; i < 2; i++) {
+          arm.B.wrist.updateWorldMatrix(true, false);
+          const q = _q1.setFromRotationMatrix(arm.B.wrist.matrixWorld);
+          T.copy(at).sub(gp.pos.clone().applyQuaternion(q));
+          this.solve(arm, shoulders[s], T, t.quat, poles[s], 0, t.lead ?? 1);
+        }
+      }
       this.fingers(arm, t);
+      if (this.contact) {
+        const hold = P.hold && this.inHand(P.hold) ? (P.hold === 'pen' ? 'quill' : 'pencil') : null;
+        const skip = [hold, P.grasp === 'pen' ? 'quill' : P.grasp].filter(Boolean);
+        // the grip of the pose the hand is going to comes in over the second half of the way there (the
+        // last one's goes over the first half); the same grip at both ends holds all the way
+        const gIn = GRIPS[this.pose]?.[s], gOut = this.from ? GRIPS[this.fromPose]?.[s] : gIn;
+        let spec = gIn, weight = 1;
+        if (this.from && this.blend < 1 && gIn !== gOut) {
+          if (this.blend >= 0.5) weight = smooth01((this.blend - 0.5) / 0.5);
+          else { spec = gOut; weight = smooth01(1 - this.blend / 0.5); }
+        }
+        const curl = this.contact.apply(s, arm, {
+          spec, weight, dt, t, T, tip, wq: t.quat,
+          skip, fingerSkip: [],
+          resolve: (T2, q2) => this.solve(arm, shoulders[s], T2, q2 || t.quat, poles[s], 0, t.lead ?? 1),
+        });
+        this.fingers(arm, t, curl);
+      }
       for (const [name, obj] of Object.entries(arm.held)) if (obj.parent === arm.B.wrist) obj.visible = t.hold === name && this.visible;
     }
     this.R.root.visible = this.L.root.visible = this.visible;
   }
 
-  // Two-bone IK: shoulder S, wrist target T. Of all the places the elbow could go, it goes where the
-  // forearm meets the hand the way a wrist likes (cocked back a little, in line with the hand), leaning
-  // toward the body's own pole only to break ties; then whatever bend the wrist is still asked for is
-  // held inside what a wrist can do. The forearm's roll is shared out down its length.
+  // Two-bone IK: shoulder S, wrist target T. The elbow can be anywhere on a circle round the line from
+  // the shoulder to the hand; of a ring of places on it, it goes to the cheapest (contact.js has none of
+  // this): where the wrist bends least from its ease (cocked back a touch), the forearm turns least past
+  // 60° (it can't go past 80°), the elbow hangs most as the body's pole has it, and the upper arm and
+  // forearm keep clear of the room. It swings there at an old man's pace. The forearm's turn is shared
+  // out down its length; the wrist's bend is held inside what a wrist can do.
   solve(arm, S, T, wq, pole, dt = 1 / 60, lead = 1) {
     const B = arm.B;
-    const ST = T.clone().sub(S);
+    let ST = T.clone().sub(S);
     let d = ST.length();
-    const reach = UPPER + FORE - 0.002;
-    // out of reach: the body leans in (the shoulder comes forward) rather than the hand falling short
-    if (d > reach) { S = S.clone().addScaledVector(ST.normalize(), d - reach); d = reach; }
+    const reach = UPPER + FORE - 0.002, easy = 0.95 * reach;
+    // nearly out of reach: the body leans in (the shoulder comes forward), so the elbow keeps a bend
+    if (d > easy) { S = S.clone().addScaledVector(ST.normalize(), Math.min(0.3, d - easy)); ST = T.clone().sub(S); d = ST.length(); }
+    if (d > reach) { S = S.clone().addScaledVector(ST.clone().normalize(), d - reach); d = reach; }
     d = Math.max(d, Math.abs(UPPER - FORE) + 0.01);
     const dir = T.clone().sub(S).normalize();
     const a = (UPPER * UPPER - FORE * FORE + d * d) / (2 * d);
     const h = Math.sqrt(Math.max(0, UPPER * UPPER - a * a));
-    // where the elbow would be if the forearm left the wrist straight back from the hand
-    const want = new THREE.Vector3(0, 0.32, 1).normalize().applyQuaternion(wq).multiplyScalar(FORE).add(T).sub(S);
-    const wp = want.addScaledVector(dir, -want.dot(dir));
     const bp = pole.clone().addScaledVector(dir, -pole.dot(dir)).normalize();
-    // (how far off the line the natural elbow is decides how much it counts: an arm near its full
-    // reach has no preference, and leaves it to the body's own)
-    const pp = wp.multiplyScalar(lead / FORE).addScaledVector(bp, 0.45);
-    if (pp.lengthSq() < 1e-8) pp.copy(bp);
-    // never with the elbow up above the shoulder's line or swung in across the chest
-    pp.normalize();
-    if (pp.dot(bp) < -0.2) pp.addScaledVector(bp, -0.2 - pp.dot(bp)).normalize();
+    const bq = dir.clone().cross(bp);
+    let pp;
+    if (dt > 0 || !arm.pp) {
+      this.contact?.armBegin(arm, S, T);
+      // the ring of places, then the best one refined between its neighbours
+      const N = 24, cost = (phi) => this.elbowCost(arm, S, T, dir, a, h, _pp.copy(bp).multiplyScalar(Math.cos(phi)).addScaledVector(bq, Math.sin(phi)), wq, lead, bp);
+      let bi = 0, bc = Infinity;
+      const cs = [];
+      for (let k = 0; k < N; k++) { const c = cost(k / N * Math.PI * 2); cs.push(c); if (c < bc) { bc = c; bi = k; } }
+      const c0 = cs[(bi + N - 1) % N], c2 = cs[(bi + 1) % N], den = c0 - 2 * bc + c2;
+      const phi = (bi + (den > 1e-12 ? Math.max(-0.5, Math.min(0.5, 0.5 * (c0 - c2) / den)) : 0)) / N * Math.PI * 2;
+      pp = bp.clone().multiplyScalar(Math.cos(phi)).addScaledVector(bq, Math.sin(phi));
+    } else pp = arm.pp.clone();      // the same frame again (the wrist moved a little): the same elbow
     // the elbow swings round to where it's going at an old man's pace, never jumping across
     if (arm.pp) {
       const prev = arm.pp.clone().addScaledVector(dir, -arm.pp.dot(dir));
@@ -597,21 +677,17 @@ export class Hands {
     const fd = T.clone().sub(E).normalize();
 
     // the forearm at its neutral turn (thumb up) has the back of the hand along the elbow's hinge,
-    // facing out; the hand's turn from there (pronation one way, supination the other, each about a
-    // right angle) is one angle, carried on from last frame's (no wrapping round from +180° to −180°),
-    // kept within what a forearm can turn, and shared out down its length
+    // facing out; the hand's turn from there (pronation one way, supination the other) is one angle,
+    // carried on from last frame's (no wrapping round from +180° to −180°), turned at a steady pace,
+    // held within what a forearm can turn, and shared out down its length: the elbow's end, the middle,
+    // the wrist's end
     const n0 = pp.clone().cross(fd).multiplyScalar(arm.side);
     if (n0.lengthSq() < 1e-6) n0.set(arm.side, 0, 0);
     n0.normalize();
-    const hd = _w.set(0, 1, 0).applyQuaternion(wq);
-    const hdp = hd.addScaledVector(fd, -hd.dot(fd));
     let roll = arm.roll ?? 0;
-    if (hdp.lengthSq() > 1e-6) {
-      hdp.normalize();
-      const r = Math.atan2(n0.clone().cross(hdp).dot(fd) * -1, n0.dot(hdp));
-      roll = arm.roll == null ? r : arm.roll + Math.max(-dt * 7, Math.min(dt * 7, Math.atan2(Math.sin(r - arm.roll), Math.cos(r - arm.roll))));
-    }
-    roll = Math.max(-1.75, Math.min(1.75, roll));
+    const r = turnOf(n0, fd, wq);
+    if (r != null) roll = arm.roll == null ? r : arm.roll + Math.max(-dt * 7, Math.min(dt * 7, wrapPi(r - arm.roll)));
+    roll = Math.max(-TURN, Math.min(TURN, roll));
     arm.roll = roll;
 
     // upper arm: -Z along S→E, its back roughly up
@@ -625,25 +701,60 @@ export class Hands {
     B.twist.quaternion.copy(twistL);
     const twistW = elbowQ.clone().multiply(twistL);
     const rel = twistW.invert().multiply(wq);
-    B.wrist.quaternion.copy(clampWrist(rel, arm.side));
+    B.wrist.quaternion.copy(clampWrist(rel, arm.side, roll * 0.25));
     arm.report = { roll, rel, elbow: E };
     return rel;
   }
 
-  fingers(arm, t) {
-    const B = arm.B, side = arm.side;
-    for (const f of FNAMES) {
-      const v = t.fingers[f], F = FINGERS[f];
-      B[f + '1'].rotation.set(-v[1], (F.nat + v[0] * F.out) * side, 0);
-      B[f + '2'].rotation.set(-v[2], 0, 0);
-      B[f + '3'].rotation.set(-v[3], 0, 0);
+  // what an elbow at pp (a unit direction off the shoulder-to-hand line) costs: see solve()
+  elbowCost(arm, S, T, dir, a, h, pp, wq, lead, bp) {
+    const E = _E.copy(S).addScaledVector(dir, a).addScaledVector(pp, h);
+    const fd = _fd.copy(T).sub(E).normalize();
+    const n0 = _n0.copy(pp).cross(fd).multiplyScalar(arm.side);
+    if (n0.lengthSq() < 1e-8) return 1e9;
+    n0.normalize();
+    let c = 0.6 * (1 - pp.dot(bp));
+    // never with the elbow up above the shoulder's line, or swung in across the chest
+    if (pp.dot(bp) < -0.2) c += 50 * (-0.2 - pp.dot(bp)) ** 2;
+    const r0 = turnOf(n0, fd, wq);
+    if (r0 != null) {
+      const r = arm.roll == null ? r0 : arm.roll + wrapPi(r0 - arm.roll);
+      const over = Math.max(0, Math.abs(r) - EASY_TURN);
+      c += (over / 0.35) ** 2;
+      if (lead > 0) {
+        // the wrist's bend left over, against its range, measured from its ease
+        const rc = Math.max(-TURN, Math.min(TURN, r));
+        _q1.setFromRotationMatrix(_m.lookAt(_o, fd, n0)).multiply(_t.setFromAxisAngle(_Z, rc));
+        const rel = _q1.invert().multiply(wq);
+        const k = cone(rel, arm.side, 0.17);
+        c += lead * (k * k + 20 * Math.max(0, k - 1) ** 2);
+      }
     }
-    const th = t.thumb;
-    const r = B.thumb1.userData.rest;
-    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(-th[0], th[1] * side, th[2] * side, 'YXZ'));
-    B.thumb1.quaternion.copy(r).multiply(q);
-    B.thumb2.rotation.set(-th[3], 0, 0);
-    B.thumb3.rotation.set(-th[4], 0, 0);
+    if (this.contact) c += this.contact.armCost(arm, S, E, T, n0);
+    return c;
+  }
+
+  // set every finger and the thumb as the pose has them, curled by `curl` (contact solver), within each
+  // joint's range (anatomy.js)
+  fingers(arm, t, curl = null) {
+    for (const f of FNAMES) this.finger(arm, t, f, curl?.[f] || 0);
+    this.finger(arm, t, 'thumb', curl?.thumb || 0);
+  }
+  finger(arm, t, f, c) {
+    const B = arm.B, side = arm.side;
+    if (f === 'thumb') {
+      const th = t.thumb;
+      const q = _q2.setFromEuler(_e.set(-(th[0] + c * THUMB_CURL[0]), (th[1] + c * THUMB_CURL[1]) * side, th[2] * side, 'YXZ'));
+      B.thumb1.quaternion.copy(B.thumb1.userData.rest).multiply(q);
+      B.thumb2.rotation.set(-clampD(th[3] + c * THUMB_CURL[3], A.thumb.mcp), 0, 0);
+      B.thumb3.rotation.set(-clampD(th[4] + c * THUMB_CURL[4], A.thumb.ip), 0, 0);
+      return;
+    }
+    const v = t.fingers[f], F = FINGERS[f];
+    const spread = Math.max(A.mcp.spread[0] * D2R, Math.min(A.mcp.spread[1] * D2R, v[0] * F.out));
+    B[f + '1'].rotation.set(-clampD(v[1] + c * CURL[0], A.mcp.flex), (F.nat + spread) * side, 0);
+    B[f + '2'].rotation.set(-clampD(v[2] + c * CURL[1], A.pip.flex), 0, 0);
+    B[f + '3'].rotation.set(-clampD(v[3] + c * CURL[2], A.dip.flex), 0, 0);
   }
 
   // the writing tip's world position right now (for checking the IK)
@@ -658,15 +769,41 @@ export class Hands {
 // 30° toward the little finger; its own twist is the forearm's business. Anything past that is pulled
 // back inside (q: the hand relative to the end of the forearm).
 const _w = new THREE.Vector3(), _Z = new THREE.Vector3(0, 0, 1), _t = new THREE.Quaternion();
+const _pp = new THREE.Vector3(), _E = new THREE.Vector3(), _fd = new THREE.Vector3(), _n0 = new THREE.Vector3(), _o = new THREE.Vector3();
+const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _e = new THREE.Euler(), _c = new THREE.Vector3();
+const D2R = Math.PI / 180, A = ANATOMY;
+const clampD = (x, r) => Math.max(r[0] * D2R, Math.min(r[1] * D2R, x));
+const wrapPi = (x) => Math.atan2(Math.sin(x), Math.cos(x));
+// the forearm's turn: no further than the anatomy allows; past 60° it is avoided
+const TURN = ANATOMY.forearm.turn[1] * D2R, EASY_TURN = 60 * D2R;
+// the hand's turn about the forearm (fd) from the hinge-neutral back (n0), for a hand turned wq
+function turnOf(n0, fd, wq) {
+  const hd = _w.set(0, 1, 0).applyQuaternion(wq);
+  hd.addScaledVector(fd, -hd.dot(fd));
+  if (hd.lengthSq() < 1e-6) return null;
+  hd.normalize();
+  return Math.atan2(-_c.crossVectors(n0, hd).dot(fd), n0.dot(hd));
+}
 const WRIST = { ext: 55 * Math.PI / 180, flex: 65 * Math.PI / 180, radial: 20 * Math.PI / 180, ulnar: 30 * Math.PI / 180 };
-function clampWrist(q, side) {
-  // q = swing · twist, the twist about the forearm's axis (local Z). The wrist itself hardly twists:
-  // what the forearm hasn't turned is mostly left undone.
+// how far a wrist's bend (q: the hand on the forearm's end) is toward the edge of its range: 0 at its
+// ease (cocked back by `ease` radians), 1 on the edge
+function cone(q, side, ease = 0) {
+  const tw = _q2.set(0, 0, q.z, q.w).normalize();
+  const sw = q.clone().multiply(tw.invert());
+  if (sw.w < 0) sw.set(-sw.x, -sw.y, -sw.z, -sw.w);
+  const sn = Math.sqrt(sw.x * sw.x + sw.y * sw.y);
+  if (sn < 1e-9) return Math.abs(ease) / WRIST.ext;
+  const ang = 2 * Math.atan2(sn, sw.w), e = ang * sw.x / sn - ease, r = ang * sw.y / sn * side;
+  return Math.hypot(e / (e >= 0 ? WRIST.ext : WRIST.flex), r / (r >= 0 ? WRIST.radial : WRIST.ulnar));
+}
+// The wrist's bend held inside its range; its twist is the forearm's last share (`share`): a wrist
+// doesn't turn on its own.
+function clampWrist(q, side, share = null) {
+  // q = swing · twist, the twist about the forearm's axis (local Z)
   const twist = new THREE.Quaternion(0, 0, q.z, q.w).normalize();
   if (twist.w < 0) twist.set(0, 0, -twist.z, -twist.w);
-  const tw = 2 * Math.atan2(twist.z, twist.w), TW = 0.7;
   const swing = q.clone().multiply(twist.clone().invert());
-  if (Math.abs(tw) > TW) twist.setFromAxisAngle(_Z, Math.sign(tw) * TW);
+  if (share != null) twist.setFromAxisAngle(_Z, share);
   // the swing's bend, measured as (back, toward the thumb), held inside an elliptical cone of the
   // wrist's limits: continuous, so a reach past them slides along the edge instead of flipping
   if (swing.w < 0) swing.set(-swing.x, -swing.y, -swing.z, -swing.w);

@@ -10,6 +10,7 @@ import { Book } from './book.js';
 import { Walker } from './walker.js';
 import { Hands, POSES, POSE_NAMES } from './hands.js';
 import { inkwell } from './inkwell.js';
+import { buildColliders } from './colliders.js';
 import { TOWER, ROOM_YAW, UNIT } from './geo.js';
 import { Bay, landHeight } from './bay.js';
 import { Headland, DAY } from './headland.js';
@@ -76,6 +77,8 @@ export class Keeper {
     this.hands = new Hands();
     W.scene.add(this.hands.group);
     this.buildDesk();
+    // what the hands can touch (colliders.js), for their contact solver
+    this.hands.attach(buildColliders(this));
     this.poseOverride = null;     // debug H cycles through the poses
     this.frames = {};
     this.tip = new THREE.Vector3();

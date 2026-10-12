@@ -12,7 +12,12 @@
 //   carry    the inkwell carried in beside the book
 //   lever, ring, lid, lift   the hand on the lamp lever, the door's ring, the lifted cover, the corner
 //                            of a turning page, for as long as it moves them
+//   book     the keeper is at the book (leaning in, over it, straightening, closing it)
 // Held for review (debug), a pose's contacts all hold.
+// A `clear` rule is the other way about: no skin of that arm (hand, forearm, sleeve) lying over the
+// logbook's pages, within 15 cm of them, once the pose is settled (a hand on its way past is not lying
+// there); its gap is how far the deepest skin is inside the pages' edge. The hand drawing may be over
+// them, but only below and to the right of its point (`drawing`).
 
 export const THRESH = {
   penetrationMm: 2,     // the deepest any skin may be inside anything
@@ -22,6 +27,7 @@ export const THRESH = {
   stepDeg: 25,          // the most any joint may turn in one frame at 30 frames a second
   twistFloor: 0.7,      // the forearm's cross-section never narrower than this part of its rest width
   holdMm: 0.0005,       // a held hand moves less than this a frame (it prints as 0.000 mm)
+  pagesMm: 0,           // how far any hand may come in over the pages (except drawing)
 };
 
 const T = THRESH;
@@ -56,7 +62,11 @@ export const STEADY = {
   chair: ['chair', 'dawn-chair'], mug: ['chair'], lamp: ['light'], door: ['door'], rail: ['stairs'],
 };
 
-export const CONTACTS = {
+// hands never over the pages
+const CLEAR = { id: 'off the pages', clear: true, tol: T.pagesMm, when: 'steady' };
+const DRAWING = { id: 'off the pages but below and right of the point', clear: true, drawing: true, tol: T.pagesMm, when: 'steady' };
+
+const CONTACTS_ = {
   walk: { R: [], L: [] },
   door: {
     // the fingers hooked through the ring: their middle phalanges on its lower bar
@@ -88,4 +98,27 @@ export const CONTACTS = {
   'ink-take': { R: TRIPOD('grasp'), L: REST },
   'ink-lift': { R: TRIPOD(), L: REST },
   show: { R: [], L: [] },
+};
+// every pose at the book keeps both hands off the pages, but the hand drawing (below and right of its
+// point), the hand turning a page, and the hand lifting the cover
+const OWN = { write: { R: DRAWING }, pen: { R: DRAWING }, turn: { R: null }, close: { L: null } };
+const AT_BOOK = ['lean', 'ready', 'write', 'pen', 'turn', 'close', 'ink-tray', 'ink-well', 'ink-take', 'ink-lift'];
+for (const p of AT_BOOK) for (const s of ['R', 'L']) {
+  const own = OWN[p] && s in OWN[p] ? OWN[p][s] : CLEAR;
+  if (own) CONTACTS_[p][s] = [...CONTACTS_[p][s], own];
+}
+export const CONTACTS = CONTACTS_;
+
+// ---------------------------------------------------------------------------------------------------
+// How the contact solver (contact.js) lays each hand on what its pose rests on or holds:
+//   anchor   the hand's part laid down onto what is below it (the heel, on a resting hand)
+//   fingers  per finger (or `all`): 'touch' curls it toward the palm until it touches something;
+//            'free' leaves it as posed, only straightened as far as it must be to come out of something;
+//            'fixed' leaves it as posed. The thumb likewise.
+// A hand with no grip here is kept out of things, its fingers free.
+const RESTING = { anchor: 'heel', fingers: { all: 'touch', thumb: 'touch' } };
+export const GRIPS = {
+  lean: { R: RESTING, L: RESTING },
+  ready: { L: RESTING }, write: { L: RESTING }, pen: { L: RESTING }, turn: { L: RESTING }, close: { R: RESTING },
+  'ink-tray': { L: RESTING }, 'ink-well': { L: RESTING }, 'ink-take': { L: RESTING }, 'ink-lift': { L: RESTING },
 };

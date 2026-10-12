@@ -60,20 +60,29 @@ export function jointAngles(arm) {
     out[f + '.spread'] = (_e.y * side - FINGERS[f].nat) * R2D;
     out[f + '.mcpOff'] = Math.abs(_e.z) * R2D;
     for (const [k, j] of [['pip', 2], ['dip', 3]]) {
-      _e.setFromQuaternion(B[f + j].quaternion, 'YXZ');
-      out[f + '.' + k] = -_e.x * R2D;
-      out[f + '.' + k + 'Off'] = Math.hypot(_e.y, _e.z) * R2D;
+      const [a, off] = hingeOf(B[f + j].quaternion);
+      out[f + '.' + k] = a; out[f + '.' + k + 'Off'] = off;
     }
   }
   // the thumb's base: its long bone against the index finger's, in the hand's frame
   Object.assign(out, thumbBase(arm));
   for (const [k, j] of [['mcp', 2], ['ip', 3]]) {
-    _e.setFromQuaternion(B['thumb' + j].quaternion, 'YXZ');
-    out['thumb.' + k] = -_e.x * R2D;
-    out['thumb.' + k + 'Off'] = Math.hypot(_e.y, _e.z) * R2D;
+    const [a, off] = hingeOf(B['thumb' + j].quaternion);
+    out['thumb.' + k] = a; out['thumb.' + k + 'Off'] = off;
   }
   return out;
 }
+
+// a hinge joint's bend (flexion about its x axis, in degrees) and how far it is turned off that hinge:
+// the rotation split into its turn about x and what's left (an Euler angle would flip past 90°)
+function hingeOf(q) {
+  const a = 2 * Math.atan2(q.x, q.w);
+  const c = Math.cos(a / 2), s = Math.sin(a / 2);
+  // what's left once the turn about x is taken off: q × (turn about x)⁻¹
+  const w = q.w * c + q.x * s;
+  return [-wrapD(a * R2D), 2 * Math.acos(Math.min(1, Math.abs(w))) * R2D];
+}
+const wrapD = (d) => ((d + 540) % 360) - 180;
 
 // swing (extension, deviation) and twist of the wrist, from its local rotation (as hands.js clamps it)
 export function decompose(q, side) {
