@@ -163,8 +163,9 @@ In first person (the default; not with `?view=classic`):
   `render/paint.js`). Nothing is downloaded.
 - **Commit after each milestone and add a REPORT.md section for it.** The section says what was
   built, how it was checked, the screenshots taken, and what is still rough.
-- **Screenshots** are numbered in `docs/screenshots/`. The last one is
-  `44-hands-beside-the-book.jpg`.
+- **Screenshots** are numbered in `docs/screenshots/`. The last ones are
+  `45-hands-contact-sheet-baseline.jpg` and `45-hands-joint-plots-baseline.png` (the hands' baseline;
+  the same views after a change take the next number).
 - **check-nights**: `node tools/check-nights.mjs`.
 - **Dev server**: `.claude/launch.json` has `keeping-light-dev`, which runs
   `python3 tools/serve.py 8001`.

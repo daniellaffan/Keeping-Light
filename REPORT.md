@@ -605,3 +605,125 @@ Screenshots:
   shows.
 * **Hardware.** Everything was seen only in software rendering, not yet under a real GPU.
 
+
+## The hands against the room: the tests first (milestone 8, phase 0)
+
+The brief is `docs/prompts/hands-contact-solver.md`: a contact solver on top of the authored poses,
+so the hands stop clipping, grip what they hold and stop twisting oddly. Its phase 0 is the testing
+method, built and run on the M7 hands **before any solver code**. This section is that baseline.
+Nothing here changes what the player sees; the only edits to the game are that `Builder` records each
+piece it places, the logbook's height function is exported, and debug mode installs the harness.
+
+**Run it:** `node tools/check-hands.mjs` (about 7 minutes here; `--quick` for about 4). It starts its
+own server and headless Chromium, prints a pass/fail table per test and per interaction, and writes
+everything to `docs/hands-check/<label>.json` and `.md`. `--shots` renders the sheets below. The
+thresholds are single constants in `src/world/contacts.js` (`THRESH`): penetration 2 mm, grip 1 mm,
+resting 2 mm, nib 0.5 mm, 25° a frame at 30 fps, twist floor 70%.
+
+### How it measures
+
+* **The skin.** Every vertex of both arms, skinned on the CPU with the same sums the GPU does: 63,644
+  skin and 1,475 sleeve vertices per arm, 130,238 points a frame. Checked against three.js's own
+  skinning: within 0.015 mm (float rounding).
+* **The colliders** (`src/world/colliders.js`) are built from the pieces the room was drawn with, so
+  they match what is on screen, polygons and hand-made tilt included (the table top is 0.14 mm off
+  level where the book lies). There are 29 of them: the table, tray, tin, almanac, oil lamp, the
+  logbook (its board, and its pages as the same height field that shapes them), the cover, the
+  turning leaf, the inkwell, the pencil, the quill, the mug, the lever and the lamp control, the door
+  and its ring, the rail and stairs, the chair, the sill, the window, the shelves, the stove and the
+  round walls. Spot checks: 1 cm above and below the table top read +10.1 and −9.9 mm; the lever
+  ball's centre is as deep as its inner radius; a point 5 mm over the page reads 4.996 mm.
+* **Penetration both ways.** Skin vertices inside any collider, and probes down the middle of thin
+  things (pencil, quill, rail, ring, leaf, vanes) inside the skin, found from the nearest skin vertex
+  and its normal. Reported per object, as the worst frame and the 99th percentile of frames.
+* **Contacts** (`src/world/contacts.js`): parts of the hand are sets of skin vertices (each
+  fingertip's pad, each phalanx's pad, the palm, the heel, the little-finger edge, the underside of
+  the forearm). Each pose names what they should touch and when (settled; while a tool is held; at
+  the moment a tool is taken or put down; for as long as the hand moves the lever, the ring, the cover
+  or a page).
+* **Joint angles** (`src/world/anatomy.js`): every joint against the AAOS normal ranges (elbow 0–150°,
+  forearm turn ±80°, wrist 70° back, 80° forward, 20° toward the thumb, 30° toward the little finger,
+  knuckles −45..90°, middle joints 0–100°, end joints −10..90°, thumb MCP 0–50°, IP −20..80°, thumb
+  base palmar abduction 0–70°), how far each moves in a frame, and the forearm's roll for flips.
+* **Scenarios:** every pose held; the whole dusk at the table as the game plays it (leaning in, a
+  pencil stroke, a page turned back and forward, the inking, the lamp lever, the walk to the chair, a
+  sip from the mug, dawn, getting up, closing the book) stepped at up to 150 frames a second so every
+  moving thing takes 120–775 steps; the door; the stairs; a whole autoplayed night (10,657 frames at
+  30 fps); the pencil and the quill pressed at 384 places over the page, in landscape and phone
+  portrait; the inking replayed with the book and the inkwell nudged 3 cm (and the book turned 3°);
+  the forearm turned from −120° to +120°.
+* **Checked by eye:** the debug overlay's x-ray (key O) hides the props and reddens skin inside them;
+  screenshot 45 shows the red exactly where the clipping is.
+
+### Baseline (the M7 hands)
+
+Tests: 1 penetration **fail**, 2 contact **fail**, 3 motion range **fail**, 4 joint angles **fail**,
+5 skin twist **fail**, 6 fuzz **fail**, 7 stability pass, 8 speed pass, 9 visual pass. Every
+interaction fails. All the numbers are in [docs/hands-check/baseline.md](docs/hands-check/baseline.md).
+
+| interaction | worst penetration (mm) | contacts out of tolerance (worst gap) | joints |
+| --- | --- | --- | --- |
+| resting beside the book | table 34.8, tray 18, book 17 | heels and fingertips are *inside* the table | right thumb end joint −21°, middle end −11° |
+| pencil, resting and writing | table 25, book 19, tray 13, pencil 5 | middle finger 8 mm off the shaft; nib off its line up to 237 mm (start of a stroke), off the page 113 mm (phone) | thumb end joint −34° (AAOS −20°), middle end −17° (−10°) |
+| quill and inkwell | table 35, inkwell 21, book 19 | thumb, index and middle 37–76 mm off the quill; palm 36 mm and fingertips 54 mm off the inkwell; nib off its line 7 mm (inking), 118 mm (phone) | thumb end joint −34° |
+| page turn | table 25, book 17, leaf 10 | fingertips never reach the corner (299 mm) while it lifts | thumb −34° |
+| cover | table 25, book 13, cover 7 | thumb and fingertips 307 and 274 mm from the cover while it lifts | forearm turn 115° |
+| lamp lever | lever 36, tin 29 | palm up to 72 mm and fingertips 116 mm off the lever during the pull | forearm turn −115° |
+| door ring | walls 88 (103 under autoplay: the right sleeve in the wall), door 25, ring 22 | fingers 228 mm off the ring while it opens the door | left elbow 58° → 10° in one frame |
+| mug | mug 39, chair 35 (sleeves) | fingertips 7–15 mm off the mug | |
+| stair rail | rail 31, walls 14 | palm up to 47 mm, fingertips 33 mm off the rail | |
+| chair arms | chair 40, tin 30 | forearms 15 mm above the arms | forearm turn −115° |
+| walking arms | chair 40, table 33, lever 18 (only in the blends to and from walking) | | forearm turn −115° |
+
+What that says:
+* **Resting hands sink into the table.** The left thumb hangs 25 mm into it and the heels and
+  fingertips are 10–12 mm in. Seen from the eye, the table hides it.
+* **The lamp lever (the brief's example), confirmed by measurement.** At rest the thumb is 26 mm
+  inside the ball. Through the pull the elbow straightens to 10° (the arm at full stretch, chasing
+  the lever round its arc), the wrist reaches the edge of its range (0.99 of the limit) and the
+  forearm turns to −115°, 35° past what a forearm can. The palm is up to 72 mm off the lever.
+* **The hand reaches its grip after the thing has started moving**: the page lifts, the cover rises
+  and the door opens before the hand gets there.
+* **The tripod grips** bend the thumb's end joint back 34° (a thumb manages 20°) and leave the middle
+  finger 8–10 mm under the shaft; the quill is held with the thumb 37 mm away.
+* **Writing:** where the wrist can bend, the pencil's point is exactly on the cursor (0.000 mm). Near
+  the bottom of the left page the wrist's limit swings it 20 mm off. A stroke starts drawing at the
+  cursor before the pencil arrives. On a phone held upright the point misses everywhere (113 mm).
+* **Stillness and repeatability hold**: a held hand moves 0.0000 mm a frame, and two runs give
+  identical numbers. **Speed:** the whole hands update takes 0.04 ms a frame here; the skin builds in
+  1.85 s (2.3 s in the worker).
+* **Skin twist:** the forearm never collapses (at least 86% of its rest width even at ±115°). One or
+  two sliver triangles (at most 0.003 mm²) turn over at half the angles, at 0° too: mesh noise.
+
+Screenshots:
+* [the contact sheet, x-ray](docs/screenshots/45-hands-contact-sheet-baseline.jpg): skin inside
+  anything is red, the colliders outlined, 16 views with fixed cameras (kept in
+  `docs/hands-check/cameras.json` so the same views can be taken after).
+* [joint angles over each moving interaction](docs/screenshots/45-hands-joint-plots-baseline.png).
+
+### Choices made where the brief was open (to confirm)
+
+* **The forearm's turn** is read off the hand: the skeleton shares it out between the elbow,
+  mid-forearm and wrist bones so the skin twists gradually, so no single bone's twist means anything
+  anatomically. The wrist bone's share is reported, not limited.
+* **Not in the AAOS table:** finger spread ±20°; the thumb base gated only on palmar abduction
+  (0–70°), its other two angles reported.
+* **Contacts:** a resting hand is its heel and three of four fingertips within 2 mm of the table; the
+  writing hand also rests on its little-finger edge; the door ring is held by fingers hooked through
+  it (their middle phalanges); "on its line" holds the nib within 0.5 mm of where the line is being
+  drawn, writing and inking.
+* **Speed budget (proposed):** the whole hands update, solver included, under 1 ms a frame here
+  (JavaScript on a phone or integrated-GPU laptop is perhaps 3–4 times slower), and the skin's build
+  no more than 10% slower than now.
+
+### Not measured
+
+* Fingers inside the palm or other fingers, and one hand inside the other, are measured but **not
+  gated** (the self measure stops at its 8 mm search radius, so it says little).
+* The skin is sampled at its vertices (about 1.25 mm apart); a sharp corner could poke between them.
+  Thin things deeper than 12 mm inside the skin are found only where they go in.
+* The leaf and the quill's vanes are sheets: only whether they pass through the skin is checked.
+* The tray can't be nudged yet: it is part of the table's merged mesh.
+* The shoulder has no range in the table, and the body is not modelled.
+* Penetration in the autoplayed night is measured every fifth frame (every frame in the scripted dusk).
+* How natural a pose looks, and frame time on a real GPU or phone.
