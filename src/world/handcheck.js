@@ -770,6 +770,9 @@ export function installHandCheck(game) {
     const box = single ? [40, 120, 820, 1200] : [80, 72, 1520, 928];
     const R = new Recorder(`sweep ${pose} ${single ? 'portrait' : 'landscape'}`);
     k.pointerOnPage = true; b.input.down = true;
+    // start settled at the first place (getting there from the hold is not part of the sweep)
+    b.input.x = box[0]; b.input.y = box[1];
+    for (let s = 0; s < 30; s++) step(1 / 30);
     for (let j = 0; j < ny; j++) for (let i0 = 0; i0 < nx; i0++) {
       const i = j % 2 ? nx - 1 - i0 : i0;
       b.input.x = box[0] + (box[2] - box[0]) * i / (nx - 1);

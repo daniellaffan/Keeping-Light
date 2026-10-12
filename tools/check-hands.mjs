@@ -17,6 +17,7 @@
 //   --shots          also render the contact sheets and joint plots into docs/screenshots
 //   --shot-prefix N  their file names, e.g. "45-hands" (default: hands-check)
 //   --jobs N         pages run at once (default 3)
+//   --report NAME    measure nothing: judge docs/hands-check/NAME.json again, print and write its tables
 import { spawn } from 'child_process';
 import { createRequire } from 'module';
 import fs from 'fs';
@@ -27,7 +28,8 @@ import { THRESH } from '../src/world/contacts.js';
 const ROOT = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
 const opt = (name, dflt = null) => { const i = args.indexOf('--' + name); return i < 0 ? dflt : args[i + 1] && !args[i + 1].startsWith('--') ? args[i + 1] : true; };
-const LABEL = opt('label', 'latest');
+const REPORT = opt('report');
+const LABEL = REPORT || opt('label', 'latest');
 const QUICK = !!opt('quick', false);
 const SHOTS = !!opt('shots', false);
 const SHOT_PREFIX = opt('shot-prefix', 'hands-check');
@@ -254,13 +256,32 @@ function judge(D) {
     const grow = base ? D.skinBuild.mainThreadMs / base : 1;
     rows.push(['8 speed', worstMean <= BUDGET.handsMs && grow <= BUDGET.skinBuildGrowth, `hands update ${worstMean.toFixed(3)} ms/frame worst mean (budget ${BUDGET.handsMs} ms, proposed); skin build ${D.skinBuild.mainThreadMs} ms here, ${D.skinBuild.worker.mesh + D.skinBuild.worker.skin} ms in the worker${base ? ` (baseline ${base} ms)` : ''}`]);
   }
-  if (want('visual')) rows.push(['9 visual', !!D.overlayKey, `overlay key O ${D.overlayKey ? 'works' : 'FAILED'}; sheets and plots ${SHOTS ? 'rendered' : 'not rendered (--shots)'}`]);
+  if (want('visual')) rows.push(['9 visual', !!D.overlayKey, `overlay key O ${D.overlayKey ? 'works' : 'FAILED'}; ${D.shots ? `contact sheet ${D.shots.sheet}, joint plots ${D.shots.plot}` : 'sheets and plots not rendered (--shots)'}`]);
   return { rows, inter };
 }
 
 function readJson(label) {
   const f = path.join(ROOT, 'docs/hands-check', label + '.json');
   return fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf8')) : null;
+}
+
+// the same tables as Markdown, for REPORT and pull requests (docs/hands-check/<label>.md)
+function markdown(J, D) {
+  const esc = (x) => String(x).replace(/\|/g, '/');
+  const md = (head, rows) => [`| ${head.join(' | ')} |`, `|${head.map(() => ' --- ').join('|')}|`, ...rows.map((r) => `| ${r.map(esc).join(' | ')} |`)].join('\n');
+  const out = [`# Hands check: ${LABEL}`, '', `Thresholds: penetration ${THRESH.penetrationMm} mm, grip ${THRESH.gripMm} mm, rest ${THRESH.restMm} mm, nib ${THRESH.nibMm} mm, ${THRESH.stepDeg}° a frame at 30 fps, twist floor ${THRESH.twistFloor * 100}%, held ${THRESH.holdMm} mm.`, '', '## Tests', '',
+    md(['test', 'result', 'detail'], J.rows.map(([n, p, d]) => [n, p ? 'pass' : '**FAIL**', d])), '', '## Interactions', '',
+    md(['interaction', 'result', 'frames', 'worst penetration, mm (p99 of frames)', 'contacts out of tolerance', 'joints out of range', 'fastest joint, °/frame', 'steps of travel'],
+      J.inter.map((r) => [r.name, r.pass ? 'pass' : '**FAIL**', r.frames, r.pen, r.contacts.length, r.joints, r.step, r.increments || ''])), ''];
+  for (const r of J.inter) if (!r.pass) {
+    out.push(`### ${r.name}`, '');
+    for (const c of r.contacts) out.push(`- contact: ${c}`);
+    for (const j of r.jointFirst) out.push(`- joint: ${j}`);
+    if (r.stepAt) out.push(`- fastest: ${r.stepAt}`);
+    out.push('');
+  }
+  if (D.errors?.length) out.push(`${D.errors.length} console errors; first: ${D.errors[0]}`, '');
+  return out.join('\n');
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -272,17 +293,23 @@ function table(head, rows) {
 
 async function main() {
   const t0 = Date.now();
-  const srv = await serve();
-  base = `http://localhost:${srv.port}`;
-  const pw = await playwright();
-  browser = await pw.chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
   let D;
-  try {
-    D = await measureAll();
-    if (SHOTS) D.shots = await shots(D);
-  } finally {
-    await browser.close();
-    srv.proc.kill();
+  if (REPORT) {
+    D = readJson(REPORT);
+    if (!D) throw new Error(`no docs/hands-check/${REPORT}.json`);
+    errors.push(...(D.errors || []));
+  } else {
+    const srv = await serve();
+    base = `http://localhost:${srv.port}`;
+    const pw = await playwright();
+    browser = await pw.chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
+    try {
+      D = await measureAll();
+      if (SHOTS) D.shots = await shots(D);
+    } finally {
+      await browser.close();
+      srv.proc.kill();
+    }
   }
   D.errors = errors;
   D.thresholds = THRESH;
@@ -291,6 +318,7 @@ async function main() {
   D.summary = J;
   fs.mkdirSync(path.join(ROOT, 'docs/hands-check'), { recursive: true });
   fs.writeFileSync(path.join(ROOT, 'docs/hands-check', LABEL + '.json'), JSON.stringify(D));
+  fs.writeFileSync(path.join(ROOT, 'docs/hands-check', LABEL + '.md'), markdown(J, D));
   console.log('\nInteractions (penetration mm: object max (p99 of frames); contacts out of tolerance; joints out of range; fastest joint °/frame at 30 fps)\n');
   console.log(table(['interaction', 'pass', 'frames', 'penetration (mm)', 'contacts failing', 'joints out', 'fastest °', 'steps of travel'],
     J.inter.map((r) => [r.name, r.pass ? 'PASS' : 'FAIL', r.frames, r.pen, r.contacts.length, r.joints, r.step, r.increments || ''])));
