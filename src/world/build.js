@@ -10,11 +10,13 @@ const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Eule
 export class Builder {
   constructor(seed = 1) {
     this.parts = new Map();   // material → [geometry]
+    this.pieces = [];         // what was placed and exactly where (the hands' colliders are built from these)
     this.r = rng(seed);
   }
 
-  // Add a geometry with a transform. `wonk` tilts and scales it a touch at random.
-  add(geo, mat, { pos = [0, 0, 0], rot = [0, 0, 0], scale = [1, 1, 1], wonk = 0.6 } = {}) {
+  // Add a geometry with a transform. `wonk` tilts and scales it a touch at random. `tag` names the piece
+  // for the hands' colliders (otherwise it goes by the finished group's name).
+  add(geo, mat, { pos = [0, 0, 0], rot = [0, 0, 0], scale = [1, 1, 1], wonk = 0.6, tag = null } = {}) {
     const r = this.r;
     const w = wonk * 0.012;
     // yaw last: pieces are rolled/pitched in their own frame, then turned into place
@@ -29,6 +31,7 @@ export class Builder {
     for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(k)) g.deleteAttribute(k);
     if (!this.parts.has(mat)) this.parts.set(mat, []);
     this.parts.get(mat).push(g);
+    this.pieces.push({ type: geo.type, params: geo.parameters, matrix: _m.clone(), tag });
     return g;
   }
 
@@ -54,6 +57,7 @@ export class Builder {
       group.add(mesh);
     }
     group.matrixAutoUpdate = false;
+    group.userData.pieces = this.pieces;
     return group;
   }
 }

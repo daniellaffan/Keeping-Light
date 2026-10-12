@@ -88,6 +88,7 @@ Add `?debug=1` to the URL for a panel showing the night, phase, act and the wate
 | `C` | free-fly camera (WASD, E/Q up and down, drag to look, Shift fast) |
 | `T` | cycle the time scale (1, 2, 4, ½, ¼) and show it |
 | `H` | cycle the hand poses |
+| `O` | the hands' overlay: colliders outlined, skin inside anything drawn red |
 
 URL parameters (with `debug=1`):
 
@@ -104,7 +105,8 @@ In the console, `__game.step(n, dt)` runs n frames, and `__game.noRender = true`
 (for long headless runs).
 
 `node tools/check-nights.mjs` checks that every night's chart can be solved within its ink and turn
-limits.
+limits. `node tools/check-hands.mjs` measures the keeper's hands against the room (it needs
+Playwright's Chromium; see REPORT, milestone 8).
 
 ## Files
 

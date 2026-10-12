@@ -16,10 +16,13 @@ const PAGE_L = { x: 72, y: 64, w: 728, h: 872 };
 const S = 0.62 / COVER.w;            // metres per logical unit on the spread
 const BOARD = 0.007;                  // board thickness
 
+// the spread's layout (the hands' colliders shape the logbook from these)
+export const BOOK = { COVER, PAGE_L, S, BOARD };
+
 function smoothstep(a, b, x) { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); }
 
 // Height of the top surface above the table at logical (lx, ly) on the spread.
-function spreadHeight(lx, ly) {
+export function spreadHeight(lx, ly) {
   const inX = smoothstep(PAGE_L.x - 4, PAGE_L.x + 3, lx) * (1 - smoothstep(1528 - 3, 1528 + 4, lx));
   const inY = smoothstep(PAGE_L.y - 4, PAGE_L.y + 3, ly) * (1 - smoothstep(936 - 3, 936 + 4, ly));
   const ux = Math.min(1, Math.abs(lx - 800) / 728);
