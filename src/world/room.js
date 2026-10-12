@@ -162,13 +162,11 @@ export function buildRoom() {
   // a drawer front
   tb.box(M.pine, 0.42, 0.07, 0.02, [0.25, T.h - 0.1, T.d / 2 - 0.065]);
   tb.cyl(M.brass, 0.012, 0.012, 0.02, [0.25, T.h - 0.1, T.d / 2 - 0.05], { rot: [Math.PI / 2, 0, 0], seg: 8 });
-  // inkwell and a pen tray
-  tb.cyl(M.glass, 0.026, 0.034, 0.05, [0.47, T.h + 0.025, -0.06], { seg: 14 });
-  tb.cyl(M.iron, 0.013, 0.013, 0.012, [0.47, T.h + 0.056, -0.06], { seg: 10 });
+  // a pen tray (the inkwell and quill on the table are the keeper's, so they can be picked up)
   tb.box(M.pine, 0.24, 0.012, 0.07, [0.46, T.h + 0.006, 0.08], { rot: [0, 0.12, 0] });
   // a tin box of spare wicks, the tide almanac
   tb.box(M.iron, 0.12, 0.06, 0.09, [-0.52, T.h + 0.03, 0.2], { rot: [0, 0.3, 0] });
-  tb.box(wash({ color: '#7E3B33', color2: '#6A3029', line: 1, gran: 0.7 }), 0.16, 0.025, 0.23, [0.42, T.h + 0.0125, -0.24], { rot: [0, -0.2, 0] });
+  tb.box(wash({ color: '#7E3B33', color2: '#6A3029', line: 1, gran: 0.7 }), 0.16, 0.025, 0.23, [0.5, T.h + 0.0125, -0.27], { rot: [0, -0.2, 0] });
   table.add(tb.finish('table'));
   table.position.set(tx, 0, tz);
   table.rotation.y = tRot;

@@ -12,8 +12,8 @@ before you change anything. Run the game with `python3 tools/serve.py 8001`.
 | M3 | 8d81651 | The keeper's hands, posed and solved |
 | M4 | cac9fbf | The night from the chair: Fleet, time-lapse, beats, the sill note, eyelids |
 | M5 | 4a02fed | The day: the door, the headland walk, the six places, the light failing; the first-person stairs; footsteps, room tone and two reverbs |
-
-| M6 | (this commit) | First person is the default (`?view=classic` for 2D, automatic fallback); README and DESIGN; screenshots 36–39 |
+| M6 | 1185ce4 | First person is the default (`?view=classic` for 2D, automatic fallback); README and DESIGN; screenshots 36–39 |
+| M7 | (this branch) | The hands remodelled: one continuous old skin, no shaking, natural wrists, never over the pages, inking with a quill; screenshots 40–44 |
 
 REPORT.md has a section for each milestone, including what is still rough and what was decided
 differently from the plan (M5: the clock runs at √pace; the climb is 8 treads, not 14).
@@ -82,11 +82,19 @@ In first person (the default; not with `?view=classic`):
 - `onStep(speed)` fires every 0.72 m of stride (the stride, not the cadence, grows with the pace).
 - `speedScale` (the outdoor pace) and `autoTo` (autoplay steering to a world point).
 
-### hands.js
+### hands.js, handmesh.js, inkwell.js
 
-- `POSES`: walk, door, lean, write, pen, turn, lamp, chair, mug, close, rail, and others; see
-  `POSE_NAMES`.
-- `setPose(name, dur)`. The keeper owns the frames.
+- `POSES`: walk, door, lean, ready, write, pen, turn, close, chair, mug, lamp, rail, the inking steps
+  (`ink-tray`, `ink-well`, `ink-take`, `ink-lift`) and the debug `show`; see `POSE_NAMES`.
+- A pose places the wrist in a frame (`pos`/`rot`), or a point of the hand there (`at`), or lets a
+  hanging hand follow its arm (`align`), or holds a tool lying in a frame (`grasp`), or puts a tool's
+  tip on `hands.tip` (`tip`).
+- `setPose(name, dur)`. The keeper owns the frames. `take(tool)` / `put(tool, parent, pos, rot)` move
+  the pencil and the quill between the hand and the desk.
+- The skin is a distance field (handmesh.js) meshed at boot in a worker (`prepareSkin`, started from
+  `boot()` in main.js; it falls back to building in place).
+- The inking sequence is `Keeper.inkSteps()`; it holds the logbook's `inking` (`inking.hold`) until
+  the nib is on the line, and `nibAt()` follows `scene.penPts`.
 
 ### Audio (src/audio/)
 
@@ -128,8 +136,8 @@ In first person (the default; not with `?view=classic`):
   `render/paint.js`). Nothing is downloaded.
 - **Commit after each milestone and add a REPORT.md section for it.** The section says what was
   built, how it was checked, the screenshots taken, and what is still rough.
-- **Screenshots** are numbered in `docs/screenshots/`. The last M5 one is
-  `35-finale-stairs-hatch.jpg`.
+- **Screenshots** are numbered in `docs/screenshots/`. The last one is
+  `44-hands-beside-the-book.jpg`.
 - **check-nights**: `node tools/check-nights.mjs`.
 - **Dev server**: `.claude/launch.json` has `keeping-light-dev`, which runs
   `python3 tools/serve.py 8001`.

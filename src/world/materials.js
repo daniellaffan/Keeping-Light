@@ -60,9 +60,18 @@ out vec3 vObj;
 in vec4 tint;      // per-vertex pigment multiplier; a = where ink stains gather
 out vec4 vTint;
 #endif
+#ifdef USE_SKIN
+in vec4 skin;      // x: mm along a finger (wrinkles run across it), y: knuckle wrinkles, z: crepe, w: nail
+out vec4 vSkin;
+out vec3 vRest;
+#endif
 void main() {
   #ifdef USE_TINT
     vTint = tint;
+  #endif
+  #ifdef USE_SKIN
+    vSkin = skin;
+    vRest = position * 1000.0;
   #endif
   vec3 transformed = vec3(position);
   vec3 objectNormal = vec3(normal);
@@ -101,10 +110,16 @@ in vec4 vTint;
 uniform vec3 uStainCol;
 uniform float uStain;
 #endif
+#ifdef USE_SKIN
+in vec4 vSkin;
+in vec3 vRest;
+uniform vec3 uWrinkleCol;
+uniform float uWrinkle;
+#endif
 
 uniform vec3 uColor;
 uniform vec3 uColor2;      // a second pigment the wash drifts toward
-uniform float uLine, uCrease, uGran, uWater, uTurb, uLit, uFogAmt, uFogFloor;
+uniform float uLine, uCrease, uGran, uWater, uTurb, uLit, uFogAmt, uFogFloor, uBand, uBare;
 uniform vec3 uEmit;
 uniform sampler2D uMap;    // painted texture (paint.js canvas), multiplies the wash
 uniform float uMapAmt;
@@ -121,6 +136,14 @@ uniform float uLampAmt, uLampFall, uRimAmt;
 uniform float uFogDensity, uFogNear, uFogHeight;
 uniform float uTurbAmt;
 ${NOISE_GLSL}
+#ifdef USE_SKIN
+// fine lines across a coordinate (one per unit), thinned and faded where they would alias
+float skinLines(float ph, float width) {
+  float fw = fwidth(ph);
+  float d = abs(fract(ph + 0.5) - 0.5);
+  return (1.0 - smoothstep(width, width + fw * 1.2, d)) * (1.0 - smoothstep(0.22, 0.45, fw));
+}
+#endif
 
 void main() {
   vec3 n = normalize(vNormalW);
@@ -146,12 +169,12 @@ void main() {
   float wrap = clamp(ndl * 0.5 + 0.5, 0.0, 1.0);
   // two or three flat values, the way a painter would block them in
   float band = smoothstep(0.44, 0.56, wrap) * 0.7 + smoothstep(0.78, 0.86, wrap) * 0.3;
-  float lit = mix(wrap, band, 0.72) * uSunAmt + uAmbient;
+  float lit = mix(wrap, band, uBand) * uSunAmt + uAmbient;
   lit = mix(1.0, lit, uLit);
   vec3 shade = base * uShadeTint * 0.72;
   vec3 col = mix(shade, base * uLightTint, clamp(lit, 0.0, 1.15));
   // where the light hits square on, the paper is left almost bare
-  col = mix(col, mix(col, vec3(0.96, 0.94, 0.88), 0.5), smoothstep(0.86, 0.97, wrap) * uSunAmt * uLit);
+  col = mix(col, mix(col, vec3(0.96, 0.94, 0.88), 0.5), smoothstep(0.86, 0.97, wrap) * uSunAmt * uLit * uBare);
 
   // lamp: a warm glaze that pools near the flame
   if (uLampAmt > 0.0) {
@@ -190,6 +213,21 @@ void main() {
 
   vec4 ink = vec4(0.0);
   if (uInkAmt > 0.0) { ink = texture(uInkMap, vUv); ink.a *= uInkAmt; }
+  #ifdef USE_SKIN
+    // an old hand's skin, drawn in fine pencil: bunched wrinkles over the knuckles, a crêpe of tiny
+    // crossing lines on the backs of the hands, the outline of each nail
+    vec3 sr = vRest;
+    float irr = vn3(sr * 0.32);
+    float brk = smoothstep(0.28, 0.6, vn3(sr * vec3(0.45, 0.45, 0.2) + 3.0));
+    float wk = skinLines(vSkin.x / 1.4 + (irr - 0.5) * 1.3, 0.09) * clamp(vSkin.y, 0.0, 1.0) * mix(0.25, 1.0, brk);
+    float c1 = skinLines(dot(sr.xz, vec2(0.80, 0.60)) / 2.1 + vn3(sr * 0.21) * 1.8, 0.07);
+    float c2 = skinLines(dot(sr.xz, vec2(-0.74, 0.67)) / 2.6 + vn3(sr * 0.21 + 5.0) * 1.8, 0.07);
+    float cr = max(c1, c2) * vSkin.z * 0.11 * smoothstep(0.45, 0.8, vn3(sr * 0.16 + 1.0)) * (0.5 + vn3(sr * 0.9));
+    float nm = vSkin.w;
+    float nl = (1.0 - smoothstep(0.0, fwidth(nm) * 1.4 + 0.03, abs(nm - 0.5))) * step(0.02, nm);
+    float wa = clamp(max(max(wk * 0.55, cr), nl * 0.5) * uWrinkle, 0.0, 1.0);
+    ink = vec4(uWrinkleCol, wa);
+  #endif
   vec3 emit = uEmit;
   if (uEmitMapAmt > 0.0) emit += texture(uEmitMap, vUv).rgb * uEmitMapAmt;
 
@@ -214,6 +252,8 @@ const col3 = (c) => (c instanceof THREE.Color ? c : new THREE.Color(c));
 //   fog, fogFloor   how much the haar takes it, and a least amount it always takes (something seen
 //                   only through mist)
 //   lit             0 = unlit (sky, paper), 1 = shaded
+//   band, bare      how much the light is blocked into flat values (0..1), and how much of the paper is
+//                   left bare where it hits square on (skin, with its small forms, takes less of both)
 //   emit            emissive colour into the light layer
 //   map, mapAmt     painted CanvasTexture multiplying the wash
 //   inkMap, inkAmt  lettering painted on the surface
@@ -221,13 +261,15 @@ const col3 = (c) => (c instanceof THREE.Color ? c : new THREE.Color(c));
 //   world           take noise from world position (for big static scenery)
 //   tint            geometry carries a vec4 'tint' attribute (pigment multiplier, a = ink stain);
 //                   stain / stainCol set how much ink has gathered and its colour
+//   skin            geometry carries a vec4 'skin' attribute (an old hand's wrinkles, crêpe and nails,
+//                   drawn as fine lines in wrinkleCol, scaled by wrinkle)
 export function wash(o = {}) {
   const c = col3(o.color ?? '#B9A88C');
   const m = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
     vertexShader: VERT,
     fragmentShader: FRAG,
-    defines: { ...(o.world ? { WORLD_NOISE: 1 } : {}), ...(o.tint ? { USE_TINT: 1 } : {}) },
+    defines: { ...(o.world ? { WORLD_NOISE: 1 } : {}), ...(o.tint ? { USE_TINT: 1 } : {}), ...(o.skin ? { USE_SKIN: 1 } : {}) },
     uniforms: {
       ...SHARED,
       uColor: { value: c },
@@ -238,6 +280,8 @@ export function wash(o = {}) {
       uWater: { value: o.water ?? 0 },
       uTurb: { value: o.turb ?? 1 },
       uLit: { value: o.lit ?? 1 },
+      uBand: { value: o.band ?? 0.72 },
+      uBare: { value: o.bare ?? 1 },
       uFogAmt: { value: o.fog ?? 1 },
       uFogFloor: { value: o.fogFloor ?? 0 },
       uEmit: { value: col3(o.emit ?? 0x000000) },
@@ -250,6 +294,8 @@ export function wash(o = {}) {
       uNoiseScale: { value: o.noiseScale ?? 1 },
       uStainCol: { value: col3(o.stainCol ?? '#1F2940') },
       uStain: { value: o.stain ?? 0 },
+      uWrinkleCol: { value: col3(o.wrinkleCol ?? '#4A3028') },
+      uWrinkle: { value: o.wrinkle ?? 1 },
     },
     side: o.side ?? THREE.FrontSide,
   });

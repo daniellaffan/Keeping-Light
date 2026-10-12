@@ -51,7 +51,8 @@ You are the keeper, in first person: all you ever see of yourself is your forear
   * The inkwell and the tally marks show how much ink and how many turns you have left.
   * Bigger boats need more room. Reefs drawn faint and dashed only matter at low water, so read the
     tide. A "?" in pencil means the line runs close to rock for the biggest boat tonight.
-  * When it looks right, **Ink the plan**: the hand takes the dip pen and inks it.
+  * When it looks right, **Ink the plan**: the keeper sets the pencil down, brings the inkwell in,
+    draws the quill out of it, dips it, and inks the line along your route.
   * ← / → or *earlier* turns back through the book. Older pages are worth reading.
 * **Night.** You pull the lamp lever and sit in the chair at the window. The boats follow exactly the
   line you inked, and the night runs on while nothing is happening, slowing for every boat near rock
