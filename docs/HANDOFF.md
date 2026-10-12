@@ -13,7 +13,8 @@ before you change anything. Run the game with `python3 tools/serve.py 8001`.
 | M4 | cac9fbf | The night from the chair: Fleet, time-lapse, beats, the sill note, eyelids |
 | M5 | 4a02fed | The day: the door, the headland walk, the six places, the light failing; the first-person stairs; footsteps, room tone and two reverbs |
 | M6 | 1185ce4 | First person is the default (`?view=classic` for 2D, automatic fallback); README and DESIGN; screenshots 36–39 |
-| M7 | (this branch) | The hands remodelled: one continuous old skin, no shaking, natural wrists, never over the pages, inking with a quill; screenshots 40–44 |
+| M7 | 44859e8 | The hands remodelled: one continuous old skin, no shaking, natural wrists, never over the pages, inking with a quill; screenshots 40–44 |
+| M8, phase 0 | (this branch) | The hands' test harness (`node tools/check-hands.mjs`) and the baseline it measured on the M7 hands; no solver yet. Brief: `docs/prompts/hands-contact-solver.md` |
 
 REPORT.md has a section for each milestone, including what is still rough and what was decided
 differently from the plan (M5: the clock runs at √pace; the climb is 8 treads, not 14).
@@ -106,6 +107,32 @@ In first person (the default; not with `?view=classic`):
 - Footsteps and the door go through a second send, `audio.setSpace('in' | 'out')`, which crossfades
   a stone-room and an open-air convolver, sets the room tone, and muffles the sea through the walls.
 
+### The hands' tests (colliders.js, anatomy.js, contacts.js, handcheck.js, tools/check-hands.mjs)
+
+- **`node tools/check-hands.mjs`** starts its own server and headless Chromium and runs the nine
+  tests of the contact-solver brief. It prints a table per interaction and per test, and writes all
+  it measured to `docs/hands-check/<label>.json` (`--label`, `--quick`, `--only`, `--shots`,
+  `--jobs`). `--shots --shot-prefix NN-hands` renders the x-ray contact sheet and the joint plots
+  into `docs/screenshots`; their world cameras are kept in `docs/hands-check/cameras.json`, so the
+  same views can be shot after a change.
+- **colliders.js** builds every collider from the pieces the room was drawn with: `Builder` records
+  each piece's type, parameters and placement (`group.userData.pieces`), and `tag` in its options names
+  the piece (`'rail'`, `'tray'`, `'ring'`...). Shapes are unions of convex solids (face planes) taken
+  from the drawn polygons, so they match what is on screen. The logbook is a height field
+  (`spreadHeight`, exported from book.js); the walls are the round room. Thin things carry probes.
+- **anatomy.js** is the range-of-motion table the solver and tests share, and `jointAngles(arm)`.
+- **contacts.js** says what each pose's hands should touch and when; `THRESH` holds every tolerance.
+- **handcheck.js** (debug only, `window.__handcheck`) skins both arms on the CPU (the same sums as
+  the GPU, checked against three.js's own to 0.015 mm), measures penetration both ways, contact
+  gaps and joint angles, and plays the scenarios: holds, the whole dusk, the door, the stairs, an
+  autoplayed night, sweeps of the writing point, nudged props, the forearm twisted.
+- **The overlay** (key O with `?debug=1`, or `__handcheck.overlay(true, {xray})`) outlines the colliders
+  and reddens skin inside anything. With `xray` the colliders' own meshes are hidden, since skin
+  inside a thing can't otherwise be seen.
+- The harness stubs `requestAnimationFrame` and seeds `Math.random` in the test page, so time moves
+  only by `__game.step` and a run repeats exactly. Playwright's `waitForFunction` must then poll on a
+  timer (`polling: 250`), not on animation frames.
+
 ## Why the day walk is designed this way
 
 - **The places sit at their real chart positions**, the ones in `headland-map.js` SITES. The 3D
@@ -136,8 +163,9 @@ In first person (the default; not with `?view=classic`):
   `render/paint.js`). Nothing is downloaded.
 - **Commit after each milestone and add a REPORT.md section for it.** The section says what was
   built, how it was checked, the screenshots taken, and what is still rough.
-- **Screenshots** are numbered in `docs/screenshots/`. The last one is
-  `44-hands-beside-the-book.jpg`.
+- **Screenshots** are numbered in `docs/screenshots/`. The last ones are
+  `45-hands-contact-sheet-baseline.jpg` and `45-hands-joint-plots-baseline.png` (the hands' baseline;
+  the same views after a change take the next number).
 - **check-nights**: `node tools/check-nights.mjs`.
 - **Dev server**: `.claude/launch.json` has `keeping-light-dev`, which runs
   `python3 tools/serve.py 8001`.

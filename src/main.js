@@ -333,6 +333,7 @@ async function boot() {
       game.keeper = new Keeper(game);
       Object.assign(game.scenes, game.keeper.wrappers);
       if (DEBUG) (await import('./world/review.js')).installReview(game);
+      if (DEBUG) (await import('./world/handcheck.js')).installHandCheck(game);
     } catch (err) {
       // if the 3D world can't be built here, the 2D game is still whole: play that instead
       console.error('first person unavailable, playing the 2D game', err);

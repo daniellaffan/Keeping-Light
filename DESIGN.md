@@ -53,11 +53,17 @@ src/world/lane.js          the lane round the bay, its spurs, and routes along i
 src/world/headland.js      by day: walking out of doors, the places, triggers, the afternoon clock
 src/world/places/*.js      one placeholder per place (shed, cliff, village, harbour, cottages, school)
 src/world/review.js        debug: contact sheets of the hand poses
+src/world/colliders.js     what the hands can touch, as solid shapes built from the drawn pieces
+src/world/anatomy.js       each joint's range of motion (AAOS), and every joint angle read off the arm
+src/world/contacts.js      what each pose's hands should touch, and every tolerance (THRESH)
+src/world/handcheck.js     debug: the hands measured against the room (tools/check-hands.mjs drives it)
 src/vendor/three/          three.js (pinned) and the one addon used, loaded through the import map
 tools/check-nights.mjs     node script: validates every night is solvable, autoplan works
+tools/check-hands.mjs      node script: the hands' tests in headless Chromium (penetration, contact, joints...)
 tools/serve.py             no-cache static server for development
 docs/screenshots/          one screenshot of every distinct scene
 docs/HANDOFF.md            where the first-person build stands and how it fits together
+docs/hands-check/          the hands' measured numbers (baseline.json and later runs), the sheets' cameras
 ```
 
 ## Rendering architecture
