@@ -619,7 +619,8 @@ export function installHandCheck(game) {
     cover: () => +k.book.closed.toFixed(5),
     leaf: () => +(k.book.scene.flipAnim?.t ?? -1).toFixed(5),
     ink: () => +(k.book.scene.inking?.t ?? -1).toFixed(5) + (k.ink ? k.ink.step : 0),
-    mug: () => +(k.mugHeld ? k.room.mug.position.y : 0).toFixed(5),
+    // how far the mug has come off the sill into the hands (as the keeper carries it)
+    mug: () => +(hands.pose === 'mug' ? hands.blend : hands.from && k.lastHandPose === 'mug' ? 1 - hands.blend : 0).toFixed(5),
     rail: () => +((k.stair ?? 0) + (k.blendT ? k.blendT.t : 0)).toFixed(5),
     pencil: () => +(k.book.input.x + k.book.input.y / 1e4).toFixed(4),
     none: () => 0,
@@ -763,6 +764,8 @@ export function installHandCheck(game) {
     k.review(pose, 'dusk', {});
     if (!hands.inHand(POSES[pose].R.hold)) hands.take(POSES[pose].R.hold);
     lastBody = null;
+    // (a step first: the logbook lays itself out for the screen, one page or two, as it updates)
+    step(1 / 30);
     const b = k.book, single = b.single;
     const box = single ? [40, 120, 820, 1200] : [80, 72, 1520, 928];
     const R = new Recorder(`sweep ${pose} ${single ? 'portrait' : 'landscape'}`);
@@ -771,14 +774,18 @@ export function installHandCheck(game) {
       const i = j % 2 ? nx - 1 - i0 : i0;
       b.input.x = box[0] + (box[2] - box[0]) * i / (nx - 1);
       b.input.y = box[1] + (box[3] - box[1]) * j / (ny - 1);
-      for (let s = 0; s < settle; s++) step(1 / 30);
+      const seg = `${Math.round(b.input.x)},${Math.round(b.input.y)}`;
+      // on the way there, every frame's joints (how fast they move); there, everything
+      for (let s = 0; s < settle; s++) { const cut = step(1 / 30); R.add({ pen: {}, at: {}, a: { R: jointAngles(hands.R), L: jointAngles(hands.L) }, roll: { R: hands.R.roll, L: hands.L.roll } }, { cut, seg }); }
       const cut = step(1 / 30);
-      R.add(measure({ contacts: true, ctx: { pressed: true } }), { cut, seg: `${Math.round(b.input.x)},${Math.round(b.input.y)}` });
+      R.add(measure({ contacts: true, ctx: { pressed: true, posed: true, steady: true } }), { cut, seg });
     }
     k.pointerOnPage = false; b.input.down = false;
     const out = R.result();
     // the worst places, for the report
     out.places = Object.entries(out.segs).map(([p, S]) => [p, Math.max(0, ...Object.values(S.pen)), S.conFail]).sort((a, b) => b[1] - a[1]).slice(0, 5);
+    out.placesFailing = Object.entries(out.segs).filter(([, S]) => S.conFail).map(([p]) => p);
+    out.placed = nx * ny;
     delete out.segs;
     return out;
   }
@@ -852,10 +859,11 @@ export function installHandCheck(game) {
       const fl = flips(sk.pos, sk.nor, sk);
       // the untwisted arm (the first pass) is what a twist is compared with
       if (!ref) { ref = fl; continue; }
-      let newFlips = 0;
-      for (let t = 0; t < fl.length; t++) if (band[t] && fl[t] && !ref[t]) newFlips++;
+      // and the largest of them (mm², at rest): a sliver turning over is not the skin folding
+      let newFlips = 0, flipArea = 0;
+      for (let t = 0; t < fl.length; t++) if (band[t] && fl[t] && !ref[t]) { newFlips++; flipArea = Math.max(flipArea, triArea(sk.rest, sk.idx, t) * 1e6); }
       const A = jointAngles(arm);
-      rows.push({ a, turn: +A['forearm.turn'].toFixed(1), wristShare: +A['wrist.share'].toFixed(1), minRatio: +Math.min(...ratio).toFixed(3), at: stations[ratio.indexOf(Math.min(...ratio))], newFlips });
+      rows.push({ a, turn: +A['forearm.turn'].toFixed(1), wristShare: +A['wrist.share'].toFixed(1), minRatio: +Math.min(...ratio).toFixed(3), at: stations[ratio.indexOf(Math.min(...ratio))], newFlips, flipArea: +flipArea.toFixed(3) });
     }
     let restFlips = 0, neutralFlips = 0;
     for (let t = 0; t < restFlip.length; t++) { if (restFlip[t]) restFlips++; if (ref[t] && band[t]) neutralFlips++; }
@@ -1013,8 +1021,9 @@ export function installHandCheck(game) {
     game.noRender = false; game.step(1, 1 / 30); game.noRender = true;
     const c = document.createElement('canvas');
     c.width = w; c.height = h;
-    const src = game.canvas, sh = src.width * h / w;
-    c.getContext('2d').drawImage(src, 0, (src.height - sh) / 2, src.width, sh, 0, 0, w, h);
+    // the middle of the frame, cut to the tile's shape
+    const src = game.canvas, sw = Math.min(src.width, src.height * w / h), sh = sw * h / w;
+    c.getContext('2d').drawImage(src, (src.width - sw) / 2, (src.height - sh) / 2, sw, sh, 0, 0, w, h);
     const m = measure({});
     k.camOverride = null;
     setOverlay(false);
@@ -1074,6 +1083,11 @@ const SERIES = [['R', 'elbow.flex'], ['R', 'forearm.turn'], ['R', 'wrist.ext'], 
 function aabbDist(c, lo, hi) {
   const dx = Math.max(lo[0] - c[0], 0, c[0] - hi[0]), dy = Math.max(lo[1] - c[1], 0, c[1] - hi[1]), dz = Math.max(lo[2] - c[2], 0, c[2] - hi[2]);
   return Math.sqrt(dx * dx + dy * dy + dz * dz);
+}
+function triArea(P, I, t) {
+  const a = I[t * 3] * 3, b = I[t * 3 + 1] * 3, c = I[t * 3 + 2] * 3;
+  const ux = P[b] - P[a], uy = P[b + 1] - P[a + 1], uz = P[b + 2] - P[a + 2], vx = P[c] - P[a], vy = P[c + 1] - P[a + 1], vz = P[c + 2] - P[a + 2];
+  return Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx) / 2;
 }
 function maxMove(a, b, set) {
   let m = 0;

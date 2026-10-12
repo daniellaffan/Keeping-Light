@@ -142,7 +142,7 @@ async function measureAll() {
 // ---------------------------------------------------------------------------------------------------
 // Judging. Interactions gather the holds and phases they are made of.
 const INTERACTIONS = [
-  ['resting beside the book', { holds: ['lean'], phases: ['lean in', 'rise'] }],
+  ['resting beside the book', { holds: ['lean'], phases: ['lean in'] }],
   ['pencil: resting and writing', { holds: ['ready', 'write', 'ink-tray'], phases: ['write'], sweeps: ['write landscape', 'write portrait'] }],
   ['quill and inkwell', { holds: ['pen', 'ink-well', 'ink-take', 'ink-lift'], phases: ['ink'], sweeps: ['pen landscape', 'pen portrait'], nudges: true }],
   ['page turn', { holds: ['turn'], phases: ['turn back', 'turn forward'] }],
@@ -151,7 +151,7 @@ const INTERACTIONS = [
   ['door ring', { holds: ['door'], phases: ['door'] }],
   ['mug', { holds: ['mug'], phases: ['mug'] }],
   ['stair rail', { holds: ['rail'], phases: ['stairs'] }],
-  ['chair arms', { holds: ['chair'], phases: ['to the chair', 'dawn'] }],
+  ['chair arms', { holds: ['chair'], phases: ['to the chair', 'dawn', 'rise'] }],
   ['walking arms', { holds: ['walk'], phases: [], night: ['walk'] }],
 ];
 const MOVING = { 'page turn': ['turn back', 'turn forward'], cover: ['close'], 'lamp lever': ['lamp'], 'door ring': ['door'], mug: ['mug'], 'stair rail': ['stairs'], 'quill and inkwell': ['ink'] };
@@ -232,8 +232,9 @@ function judge(D) {
   if (want('twist') && D.twist) {
     const inRange = D.twist.rows.filter((r) => r.turn >= D.twist.range[0] - 1e-6 && r.turn <= D.twist.range[1] + 1e-6);
     const worstR = inRange.reduce((a, r) => (r.minRatio < a.minRatio ? r : a), { minRatio: Infinity });
-    const nf = inRange.reduce((a, r) => a + r.newFlips, 0);
-    rows.push(['5 skin twist', worstR.minRatio >= THRESH.twistFloor && !nf, `narrowest ${(worstR.minRatio * 100).toFixed(0)}% of rest width (turn ${worstR.turn}°, ${worstR.at * 1000} mm from the wrist); ${nf} new flipped triangles; forearm turn reached ${Math.min(...D.twist.rows.map((r) => r.turn))}..${Math.max(...D.twist.rows.map((r) => r.turn))}°`]);
+    const nf = Math.max(0, ...inRange.map((r) => r.newFlips)), fa = Math.max(0, ...inRange.map((r) => r.flipArea || 0));
+    const angles = inRange.filter((r) => r.newFlips).length;
+    rows.push(['5 skin twist', worstR.minRatio >= THRESH.twistFloor && !nf, `narrowest ${(worstR.minRatio * 100).toFixed(0)}% of rest width (turn ${worstR.turn}°, ${Math.round(worstR.at * 1000)} mm from the wrist); triangles turned over at ${angles} of ${inRange.length} angles, at most ${nf} at once, the largest ${fa} mm²; forearm turn reached ${Math.min(...D.twist.rows.map((r) => r.turn))}..${Math.max(...D.twist.rows.map((r) => r.turn))}°`]);
   }
   if (want('fuzz') && D.sweeps) {
     const res = [...Object.values(D.sweeps), ...(D.nudges || []).map((n) => n.res)];
@@ -311,8 +312,8 @@ async function main() {
 // joint-angle plots of each moving interaction. Saved into docs/screenshots.
 // [interaction, pose, studio view round the wrist, prop part-way]
 const VIEWS = [
-  ['resting beside the book', 'lean', { hand: 'L', az: 1.57, el: 0.1, dist: 0.3 }],
-  ['resting beside the book', 'lean', { hand: 'R', az: -1.57, el: 0.1, dist: 0.3 }],
+  ['resting beside the book, left hand', 'lean', { hand: 'L', az: 1.57, el: 0.1, dist: 0.3 }],
+  ['resting beside the book, right hand', 'lean', { hand: 'R', az: -1.57, el: 0.1, dist: 0.3 }],
   ['pencil: ready', 'ready', { hand: 'R', az: -1.3, el: 0.2, dist: 0.3 }],
   ['pencil: writing', 'write', { hand: 'R', az: 1.3, el: 0.4, dist: 0.3 }],
   ['quill: drawing', 'pen', { hand: 'R', az: 1.3, el: 0.4, dist: 0.3 }],
