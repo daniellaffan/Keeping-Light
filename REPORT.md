@@ -450,9 +450,10 @@ Screenshots (1280×800, software-rendered):
 * [up into the hatch](docs/screenshots/35-finale-stairs-hatch.jpg)
 
 **Still rough.**
-* **The tower from outside is squat:** the one-storey watch room with the lantern on its roof, about
-  7 m in all. On the arrival it reads more like a round hut than a lighthouse. Making it taller would
-  move the lamp, the beam and the chair view, so it's left for a later pass.
+* ~~**The tower from outside is squat.**~~ Since fixed: `src/world/tower.js` raises a 28 m tower over
+  the watch room. It is a limewashed granite shaft with a painted, weathered skin, granite corbels and
+  gallery, and a red cupola over diamond glazing and a Fresnel lens. The lamp is now 23.9 m up, and
+  the beam dips to cross the bay where it used to. See `docs/screenshots/tower-*.jpg`.
 * **The ground close up is soft.** The terrain's pigment noise is large-scale, so the grass at your
   feet is a smooth wash. The ink also picks out long creases where ridges overlap.
 * **Greyboxes are greyboxes.** Plain blocks with dark doors, by design (placeholders). The church

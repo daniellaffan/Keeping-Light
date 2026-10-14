@@ -326,7 +326,7 @@ export function buildColliders(keeper) {
   keeper.room.group.updateMatrixWorld(true);
   keeper.room.group.traverse((o) => {
     const pcs = o.userData.pieces;
-    if (!pcs || o.name === 'tower-top') return;
+    if (!pcs || o.name === 'tower') return;
     for (const pc of pcs) {
       const g = pieceGeometry(pc);
       if (!g) continue;

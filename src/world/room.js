@@ -7,6 +7,7 @@ import { Builder, polar, facing } from './build.js';
 import { wash, glowMaterial } from './materials.js';
 import { woodTex, plasterTex, knitTex, letteringTex } from './textures.js';
 import { rng } from '../render/paint.js';
+import { buildTower } from './tower.js';
 import { letter } from '../render/hand.js';
 
 export const ROOM = {
@@ -80,14 +81,7 @@ export function buildRoom() {
   const dado = wash({ color: '#C9B996', color2: '#BBA986', map: plasterTex(3), line: 0.6, crease: 0.3, gran: 0.5 });
   wallArc(b, dado, w.deg + wa, d.deg - da, 0, 0.5, R - 0.008);
   wallArc(b, dado, d.deg + da, 360 + w.deg - wa, 0, 0.5, R - 0.008);
-  // the outer face of the tower (seen through the window reveal and from outside)
-  const RO = R + ROOM.wall;
-  const wo = Math.asin(w.half / RO) / DEG, dO = Math.asin(d.half / RO) / DEG;
-  wallArc(b, M.stone, w.deg + wo, d.deg - dO, -0.4, H + 0.6, RO, false);
-  wallArc(b, M.stone, d.deg + dO, 360 + w.deg - wo, -0.4, H + 0.6, RO, false);
-  wallArc(b, M.stone, w.deg - wo, w.deg + wo, -0.4, w.sill, RO, false);
-  wallArc(b, M.stone, w.deg - wo, w.deg + wo, w.top, H + 0.6, RO, false);
-  wallArc(b, M.stone, d.deg - dO, d.deg + dO, d.top, H + 0.6, RO, false);
+  // the outer face of the tower is tower.js's, with the shaft above
 
   // window reveal, sill, frame and glazing bars
   reveal(b, M.stone, w.deg, w.half, w.sill, w.top);
@@ -314,7 +308,7 @@ export function buildRoom() {
 
   const group = new THREE.Group();
   group.name = 'watchroom';
-  group.add(b.finish('room'), sb.finish('shelves'), table, control, clock, stove, chair, mug, sill.group, door, buildTop(M), hatchGlow);
+  group.add(b.finish('room'), sb.finish('shelves'), table, control, clock, stove, chair, mug, sill.group, door, buildTower(ROOM, M), hatchGlow);
   return {
     group, table, lamp, flame, halo, clock, hourHand, minHand, lever: pivot, stove, stoveGlow, chair, mug, M, sill, hatchGlow,
     door: { pivot: door, swing, ring: ringAt },
@@ -326,38 +320,6 @@ export function buildRoom() {
       radius: R - 0.38,
     },
   };
-}
-
-// The tower above the watch room, as it's seen from the headland: the gallery with its rail, the
-// lantern's glazing and the dome over it.
-function buildTop(M) {
-  const b = new Builder(29);
-  const { R, H, wall } = ROOM, RO = R + wall, top = H + 0.6;
-  const white = wash({ color: '#EEE8DA', color2: '#E2DAC6', map: plasterTex(5), line: 1, crease: 0.5, gran: 0.6 });
-  const dark = wash({ color: '#2E3436', color2: '#3A4042', line: 1, crease: 0.6, gran: 0.5 });
-  // the gallery floor, a lip out beyond the wall
-  b.cyl(M.stone, RO + 0.4, RO + 0.3, 0.16, [0, top + 0.08, 0], { seg: 40 });
-  // the rail: posts and a ring
-  for (let i = 0; i < 24; i++) {
-    const [x, z] = polar(i * 15, RO + 0.32);
-    b.cyl(dark, 0.02, 0.02, 0.95, [x, top + 0.62, z], { seg: 5 });
-  }
-  b.add(new THREE.TorusGeometry(RO + 0.32, 0.03, 5, 48), dark, { pos: [0, top + 1.1, 0], rot: [Math.PI / 2, 0, 0], wonk: 0 });
-  // the lantern: a low wall, the glazing bars (the glass itself left clear, so the lamp and its beam
-  // show through), a dome and a ventilator ball. The lamp (bay.js LAMP) sits in the glazing.
-  b.cyl(white, 1.7, 1.75, 0.4, [0, top + 0.3, 0], { seg: 24 });
-  for (let i = 0; i < 12; i++) {
-    const [x, z] = polar(i * 30, 1.62);
-    b.cyl(dark, 0.03, 0.03, 1.5, [x, top + 1.25, z], { seg: 4 });
-  }
-  for (const y of [0.5, 1.25]) b.add(new THREE.TorusGeometry(1.62, 0.025, 4, 24), dark, { pos: [0, top + y, 0], rot: [Math.PI / 2, 0, 0], wonk: 0 });
-  b.cyl(dark, 1.95, 1.7, 0.12, [0, top + 2.05, 0], { seg: 24 });
-  b.add(new THREE.SphereGeometry(1.75, 24, 8, 0, Math.PI * 2, 0, Math.PI / 2), dark, { pos: [0, top + 2.07, 0], scale: [1, 0.55, 1], wonk: 0 });
-  b.add(new THREE.SphereGeometry(0.18, 10, 8), dark, { pos: [0, top + 3.1, 0] });
-  // the lens, brass and glass, in the middle of the lantern
-  b.cyl(M.brass, 0.45, 0.45, 0.7, [0, top + 0.78, 0], { seg: 12 });
-  b.cyl(M.iron, 0.22, 0.28, 0.3, [0, top + 0.28, 0], { seg: 10 });
-  return b.finish('tower-top');
 }
 
 // --- helpers ---

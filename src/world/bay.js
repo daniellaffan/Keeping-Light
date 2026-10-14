@@ -11,13 +11,17 @@ import { UNIT, TOWER, CLIFF_TOP, ROOM_YAW } from './geo.js';
 import { laneDist } from './lane.js';
 import { wash, glowMaterial, beamMaterial } from './materials.js';
 import { Builder } from './build.js';
+import { LAMP_HEIGHT } from './tower.js';
 import { rng, noise1, fbm1, fbm2, makeCanvas, smooth } from '../render/paint.js';
 
 // sea level for each tide (m), and the height of each kind of reef's top
 export const TIDE = { high: 1.0, mid: 0, low: -1.0 };
 const REEF_TOP = { always: 1.7, mid: 0.5, low: -0.5 };
-// where the lamp is: above the watch room, at the top of the tower
-export const LAMP = new THREE.Vector3(TOWER.x, TOWER.y + 4.6, TOWER.z);
+// where the lamp is: in the lantern at the top of the tower
+export const LAMP = new THREE.Vector3(TOWER.x, TOWER.y + LAMP_HEIGHT, TOWER.z);
+// The beam dips a little from up there, so it still crosses the bay where the boats are, meeting the
+// line it took when the lamp sat just over the watch room (4.6 m up, dipping 0.012) half a kilometre out.
+const BEAM_DIP = 0.012 + (LAMP_HEIGHT - 4.6) / 500;
 
 const C = (x, y) => [x * UNIT, y * UNIT];       // chart → world x, z
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -570,6 +574,9 @@ export class Bay {
     this.glint = new THREE.Mesh(fan, glowMaterial({ emit: 0xffe2a8, amt: 0.2, map: glintTex() }));
     this.glint.renderOrder = 4;
     this.glint.frustumCulled = false;
+    // the lamp itself, burning in the lantern (seen from outside, across the bay)
+    this.lampHalo = billboard(9, 0xffe2a8, 0.6);
+    this.beam.add(this.lampHalo);
     this.group.add(this.beam, this.glint);
   }
 
@@ -766,7 +773,8 @@ export class Bay {
     const yaw = B.angle - Math.PI / 2;     // the chart's angle (0 east, anticlockwise) as a turn about y
     this.beam.visible = B.amt > 0.001;
     this.beam.rotation.y = yaw;
-    this.beam.rotation.x = -0.012;
+    this.beam.rotation.x = -BEAM_DIP;
+    this.lampHalo.material.uniforms.uAmt.value = 0.6 * B.amt;
     const blur = B.blur || 0;
     this.beamCones.forEach((c, k) => {
       const u = c.material.uniforms;
