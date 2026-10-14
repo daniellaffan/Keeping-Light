@@ -247,9 +247,11 @@ export class Obstacles {
     return o;
   }
   // signed distance from the point to the gathered parts (exact inside; outside, a lower bound unless
-  // `exact`); with `normal`, the outward direction there in this.n and the collider in this.hit.
-  // (`cut`: distances beyond it don't matter, and may come back as just "that far or more")
-  sd(x, y, z, exact = false, normal = true, cut = Infinity) {
+  // `exact`); with `normal`, the outward direction there in this.n, how far in along it in this.out and
+  // the collider in this.hit. With `from` (a point outside, that the point came from), the way out of a
+  // solid is by one of the faces `from` is in front of: deep in a slab, back out of its top, not its
+  // bottom. (`cut`: distances beyond it don't matter, and may come back as just "that far or more")
+  sd(x, y, z, exact = false, normal = true, cut = Infinity, from = null) {
     let best = cut, bp = null, bL = null;
     const W = this.wb, PS = this.parts, LC = this.local;
     // each collider's space, worked out for this point only when a part of it is near
@@ -268,14 +270,27 @@ export class Obstacles {
     }
     if (!normal) return best;
     this.hit = bL ? bL.c : null;
+    this.out = best;
     if (!bp) { this.n.set(0, 1, 0); return best; }
     const o = this.localOf(bL, x, y, z, stamp), lx = LC[o], ly = LC[o + 1], lz = LC[o + 2];
     // the way out: the face pushing hardest (a solid), or the field's slope
     let nx, ny, nz;
     if (bp.planes) {
       const P = bp.planes;
-      let s = -Infinity, j0 = 0;
-      for (let j = 0; j < P.length; j += 4) { const v = P[j] * lx + P[j + 1] * ly + P[j + 2] * lz - P[j + 3]; if (v > s) { s = v; j0 = j; } }
+      let fx = 0, fy = 0, fz = 0;
+      if (from) {
+        const iv = bL.iv;
+        fx = iv[0] * from.x + iv[4] * from.y + iv[8] * from.z + iv[12]; fy = iv[1] * from.x + iv[5] * from.y + iv[9] * from.z + iv[13]; fz = iv[2] * from.x + iv[6] * from.y + iv[10] * from.z + iv[14];
+      }
+      let s = -Infinity, j0 = -1;
+      for (let pass = from ? 0 : 1; pass < 2 && j0 < 0; pass++) {
+        for (let j = 0; j < P.length; j += 4) {
+          if (!pass && P[j] * fx + P[j + 1] * fy + P[j + 2] * fz - P[j + 3] <= 0) continue;
+          const v = P[j] * lx + P[j + 1] * ly + P[j + 2] * lz - P[j + 3];
+          if (v > s) { s = v; j0 = j; }
+        }
+      }
+      if (best < 0) this.out = s;
       nx = P[j0]; ny = P[j0 + 1]; nz = P[j0 + 2];
     } else {
       const h = 0.0005, f = bp.f;
@@ -301,20 +316,31 @@ const MARGIN = 0.0005;        // what the skin keeps off a surface (m)
 const FORE_REACH = 0.34;      // how far off the shoulder-to-hand line the arm's bulk can be (m)
 const STEPS = 8;              // bisection steps for a finger (a turn of about 0.4°)
 const CUT = 0.004;            // further off than this, a surface doesn't matter to a hand settling
+const DOWN = 0.05;            // how far below its anchor a hand looks for something to be laid on (m)
+const LAY_RATE = 0.25;        // how fast how far it's laid down may change (m/s): coming in over the
+                              // table's edge, it's lowered onto it, not dropped
 // how a curl moves the joints: [knuckle, middle, end] for a finger; [flex across, swing out, roll,
 // knuckle, end] for the thumb (toward the palm: it hangs below a hand flat on a table)
 const CURL = [1, 1.1, 0.7];
 export const THUMB_CURL = [0.5, 1.0, 0, 0.3, 0.3];
 const RANGE = { lo: -0.8, hi: 1.2 };
 const CURL_RATE = 4;          // how fast a finger curls or opens (a curl of 1 a second is a knuckle turning about 60°)
+const STUCK = 3;              // times the hand is moved out with a finger that can't get out on its own
+const LIFT_STEPS = 3;         // bisection steps for how far a hand taken out is let down again in a frame
+// the most times the hand is moved in a frame: pushed out 5 times, laid down and turned (twice: a move
+// and 4 turns), pushed out twice more, let down from where a stuck finger took it (tried, bisected, put
+// at what was found, and back where it was laid if that has it in something), and moved with a stuck
+// finger (a fixed number: it never runs on)
+export const MOVES = 5 + 2 * (1 + 4) + 2 + (3 + LIFT_STEPS) + STUCK;
 
 // The arm's bulk, as balls along its two bones, each as big as the skin or the sleeve round it there
 // (the furthest vertex from the bone's line, within 2.5 cm along it): [bone (0 upper arm, 1 forearm),
 // distance along it (m), radius (m)]
 const UPPER_L = 0.30;
+const WRIST_Z = -0.30 - 0.26;   // the wrist on the arm at rest
 function bulkOf(arm) {
   const g = arm.mesh.geometry, sg = arm.sleeve.geometry;
-  const W0 = -0.30 - 0.26;
+  const W0 = WRIST_Z;
   const out = [];
   const each = (fn) => { for (const G of [g, sg]) { const P = G.attributes.position.array; for (let i = 0; i < P.length; i += 3) fn(P[i], P[i + 1], P[i + 2]); } };
   for (let t = 0.03; t < 0.30; t += 0.05) {            // the upper arm: z from 0 (shoulder) down to -0.30
@@ -342,9 +368,14 @@ export class ContactSolver {
     const R = hands.R, cls = this.cls = classifySkin(R), S = cls.sets;
     const pick = (set, sp) => sample(R, set, sp);
     const label = (name) => { const i = LABELS.indexOf(name), out = []; for (let v = 0; v < cls.n; v++) if (cls.label[v] === i) out.push(v); return Int32Array.from(out); };
+    // (the hand's body: the palm, and the forearm's last 5 cm before the wrist, which a hand laid flat
+    // brings down to the table)
+    const P0 = R.mesh.geometry.attributes.position.array;
+    const wristEnd = S.forearm.filter((v) => P0[v * 3 + 2] < WRIST_Z + 0.05);
     this.idx = {
-      body: pick(S['palm.all'], 0.008),
+      body: union(pick(S['palm.all'], 0.008), pick(wristEnd, 0.008)),
       heel: pick(S.heel, 0.004),
+      ulnar: pick(S.ulnar, 0.004),
       arm: pick(union(S.forearm, S.sleeve), 0.03),
       fingers: {},
     };
@@ -353,7 +384,7 @@ export class ContactSolver {
     // and the thumb's both: the hand rests on it, and the thumb mustn't press it in)
     this.idx.fingers.thumb = pick(union(S.thenar, label('thumb1'), label('thumb2'), label('thumb3')), 0.005);
     const make = (arm) => {
-      const o = { body: new SkinPoints(arm, this.idx.body), heel: new SkinPoints(arm, this.idx.heel), fingers: {} };
+      const o = { body: new SkinPoints(arm, this.idx.body), heel: new SkinPoints(arm, this.idx.heel), ulnar: new SkinPoints(arm, this.idx.ulnar), fingers: {} };
       for (const f of [...FNAMES, 'thumb']) o.fingers[f] = new SkinPoints(arm, this.idx.fingers[f]);
       return o;
     };
@@ -368,8 +399,8 @@ export class ContactSolver {
   frame() { this.ob.update(); }
 
   // ctx: { spec (GRIPS entry or null), t (the hand's resolved pose), T (wrist target), resolve(T): the
-  // arm solved for a wrist moved there (its elbow and turn kept), skip: names the hand's body ignores,
-  // tip: the wrist is placed by a tool's point (it is left where it is) }
+  // arm solved for a wrist moved there (its elbow and turn kept), skip: names the hand ignores (the tool
+  // it holds), tip: the wrist is placed by a tool's point (it is left where it is) }
   apply(s, arm, ctx) {
     const spec = ctx.spec || FREE, ob = this.ob, P = this.pts[s], M = this.M[s], st = this.stats[s];
     const W = ctx.weight ?? 1;
@@ -406,15 +437,33 @@ export class ContactSolver {
           move(ob.n.x * worst, ob.n.y * worst, ob.n.z * worst);
         }
       };
-      // the anchor (the heel) nearest to anything: its gap, exactly, which way is out, and where
+      // the anchor (the heel, or the little-finger edge) and what's below it: from each of its points
+      // straight down to the first thing there (stepped by the distance to the nearest thing, so never
+      // past it), the nearest; a point already on or in something, how deep, and its way out. (Not simply
+      // the nearest thing: by the tin, that's its side, and the hand would be laid sideways into it.)
       const heel = () => {
+        const A = P[spec.anchor];
         boneMatrices(arm, M);
-        P.heel.update(M);
-        const H = P.heel.pos;
-        ob.minGap(H, P.heel.count, 0.05);
-        if (ob.at < 0) return null;
-        const i = ob.at, g = ob.sd(H[i * 3], H[i * 3 + 1], H[i * 3 + 2], true, true, 0.05);
-        return { g, n: ob.n.clone(), p: new THREE.Vector3(H[i * 3], H[i * 3 + 1], H[i * 3 + 2]) };
+        A.update(M);
+        const H = A.pos;
+        let best = DOWN, bi = -1;
+        for (let i = 0; i < A.count; i++) {
+          const x = H[i * 3], y = H[i * 3 + 1], z = H[i * 3 + 2];
+          let t = ob.sd(x, y, z, false, false, best + 0.01);
+          if (t > MARGIN) {
+            for (let k = 0; k < 10 && t < best; k++) {
+              const d = ob.sd(x, y - t, z, false, false, best - t + 0.01);
+              if (d < 0.0002) break;
+              t += d;
+            }
+          }
+          if (t < best) { best = t; bi = i; }
+        }
+        if (bi < 0) return null;
+        const p = new THREE.Vector3(H[bi * 3], H[bi * 3 + 1], H[bi * 3 + 2]);
+        if (best > MARGIN) return { g: best, n: new THREE.Vector3(0, 1, 0), p };
+        ob.sd(p.x, p.y, p.z, true, true, 0.05);
+        return { g: best, n: ob.n.clone(), p };
       };
       push(5);
       if (spec.anchor) {
@@ -427,11 +476,19 @@ export class ContactSolver {
           T.sub(pivot).applyQuaternion(r).add(pivot);
           move(0, 0, 0);
         };
+        const l0 = arm.lay, r = LAY_RATE * ctx.dt;
+        let laid = 0;
         for (let pass = 0; pass < 2; pass++) {
           const h = heel();
           if (!h) break;
           if (this.debug) (st.log ||= []).push(['heel', +(h.g * 1000).toFixed(2), h.n.toArray().map((v) => +v.toFixed(2))]);
-          if (Math.abs(h.g - MARGIN) > 0.0002) { const d = W * Math.max(-0.03, Math.min(0.03, h.g - MARGIN)); move(-h.n.x * d, -h.n.y * d, -h.n.z * d); }
+          if (Math.abs(h.g - MARGIN) > 0.0002) {
+            let d = W * Math.max(-0.03, Math.min(0.03, h.g - MARGIN));
+            if (l0 != null && ctx.dt > 0) d = Math.max(l0 - r - laid, Math.min(l0 + r - laid, d));
+            move(-h.n.x * d, -h.n.y * d, -h.n.z * d);
+            h.p.addScaledVector(h.n, -d);
+            laid += d;
+          }
           for (let it = 0; it < 4; it++) {
             boneMatrices(arm, M);
             P.body.update(M);
@@ -448,17 +505,19 @@ export class ContactSolver {
           }
         }
         push(2);
-      }
+        arm.lay = laid;
+      } else arm.lay = 0;
       ctx.T.copy(T);
       ctx.wq = q;
-    }
+    } else arm.lay = 0;
     // the fingers and the thumb, each on its own (the wrist is where it will be). Each goes where its role
-    // puts it, as fast as a finger moves (CURL_RATE), but out of anything at once. A finger that can't
-    // come out of something however straight it goes takes the hand out with it (once).
+    // puts it, as fast as a finger moves (CURL_RATE), and out of anything at once if there's a way out
+    // within this frame's turn of it. A finger in something on its way (or in however it's curled) takes
+    // the hand out with it, the deepest first; it keeps going its way, so it is never held back there.
     const fob = this.fob, last = arm.curl || {};
     const fingers = () => {
       boneMatrices(arm, M);
-      fob.gather(w.x, w.y, w.z, 0.16, null, ctx.fingerSkip);
+      fob.gather(w.x, w.y, w.z, 0.16, null, ctx.skip);
       const curl = {};
       let stuck = null;
       for (const f of [...FNAMES, 'thumb']) {
@@ -468,42 +527,97 @@ export class ContactSolver {
         // the thumb's base can't swing back behind the palm, nor out past 70° (anatomy.js)
         const [lo, hi] = f === 'thumb' ? thumbR : [RANGE.lo, RANGE.hi];
         const c0 = Math.max(lo, Math.min(hi, 0));
-        // free: as posed, straightened only as far as it must be to come out of something
-        let goal = c0;
+        // free: as posed, or the nearest curl either way that is out of everything (straightening first,
+        // or the way it has gone already); in something however it's curled, the curl that is least in
+        let goal = c0, g = null;
+        const prev = last[f];
         if (gap(c0) < MARGIN) {
-          const gl = gap(lo);
-          if (gl < MARGIN) { goal = lo; if (!stuck || gl < stuck.g) stuck = { g: gl, f, lo }; } else goal = bisect(gap, lo, c0);
+          const out = nearestFree(gap, lo, hi, c0, prev);
+          goal = out.c;
+          if (out.stuck) g = out.g;
         }
         // touch: curled until it touches (with nothing in its reach, as posed); half a grip, half way
         if (role === 'touch' && W > 0 && goal === c0) {
-          const g = gap(hi) > MARGIN ? c0 : bisect(gap, c0, hi);
-          goal = c0 + W * (g - c0);
+          const b = gap(hi) > MARGIN ? c0 : bisect(gap, c0, hi);
+          goal = c0 + W * (b - c0);
         }
         let c = goal;
-        const prev = last[f];
-        if (prev != null && ctx.dt > 0 && Math.abs(goal - prev) > CURL_RATE * ctx.dt) {
-          c = prev + Math.sign(goal - prev) * CURL_RATE * ctx.dt;
-          if (gap(c) < MARGIN) c = goal;
+        const r = CURL_RATE * ctx.dt;
+        if (prev != null && ctx.dt > 0 && Math.abs(goal - prev) > r) {
+          c = prev + Math.sign(goal - prev) * r;
+          g = gap(c);
+          if (g < MARGIN) {
+            const o = nearestFree(gap, Math.max(lo, prev - r), Math.min(hi, prev + r), c, prev);
+            if (!o.stuck) { c = o.c; g = null; }
+          }
         }
         curl[f] = c;
+        if (g != null && g < MARGIN && (!stuck || g < stuck.g)) stuck = { g, f, lo: c };
       }
       return { curl, stuck };
     };
-    let { curl, stuck } = fingers();
-    if (stuck && !ctx.tip) {
-      // the stuck finger as straight as it goes; its deepest point out along its way out, the hand with it
+    // The hand starts as far out as a stuck finger took it last frame, let down (by up to LAY_RATE) to
+    // the lowest it can be with its fingers out of things, found by bisection: held still, it comes to
+    // rest where it came out (taken out afresh each frame, it would go out and back in by turns, the
+    // fingers a frame behind it).
+    const T0 = ctx.tip ? null : ctx.T.clone();
+    const at = (v) => {
+      _T.copy(T0).add(v); st.its++;
+      ctx.resolve(_T, ctx.wq);
+      arm.root.updateWorldMatrix(true, true);
+      ctx.T.copy(_T);
+      return fingers();
+    };
+    // (how far the hand's body is in anything)
+    const bodyIn = () => { boneMatrices(arm, M); P.body.update(M); return MARGIN - ob.minGap(P.body.pos, P.body.count, CUT); };
+    // (only a hand whose body is out of things where it's laid: one caught in something isn't taken out
+    // by its fingers at all, as it's not they that keep it there)
+    const free = T0 && bodyIn() <= MARGIN;
+    let out = null;
+    if (free && arm.lift && ctx.dt > 0) {
+      const L = arm.lift.length(), lifted = (x) => at(_mid.copy(arm.lift).multiplyScalar(x / L));
+      // (a way out that has the hand's body in something, taken out through the table or under it, is
+      // no way out)
+      const caught = (o) => o.stuck || bodyIn() > MARGIN;
+      let lo = Math.max(0, L - LAY_RATE * ctx.dt), hi = L;
+      out = lifted(lo);
+      if (out.stuck) {
+        for (let i = 0; i < LIFT_STEPS; i++) {
+          const m = (lo + hi) / 2;
+          if (caught(lifted(m))) lo = m; else hi = m;
+        }
+        out = lifted(hi);
+        // (no height that has it out: it is let down as far as it may be this frame, and comes down
+        // over the next frames, never all at once)
+        if (bodyIn() > MARGIN) out = lifted(Math.max(0, L - LAY_RATE * ctx.dt));
+      }
+      if (this.debug) (st.log ||= []).push(['lift', +(L * 1000).toFixed(2), +(ctx.T.distanceTo(T0) * 1000).toFixed(2)]);
+    }
+    out ||= fingers();
+    // (again, up to STUCK times: by an edge, the way out of the deepest point may not be the way out of
+    // the next)
+    for (let it = 0; it < STUCK && out.stuck && free; it++) {
+      // the stuck finger's deepest point out along its way out, the hand with it
+      const stuck = out.stuck;
       this.fingerGap(s, arm, ctx.t, stuck.f, stuck.lo, fob);
-      const pts = P.fingers[stuck.f], i = fob.at, d = MARGIN - stuck.g;
-      fob.sd(pts.pos[i * 3], pts.pos[i * 3 + 1], pts.pos[i * 3 + 2]);
-      if (this.debug) (st.log ||= []).push(['stuck', stuck.f, +(d * 1000).toFixed(2), fob.hit?.name]);
+      // (out the way the hand came in: the side of it the wrist is on)
+      const pts = P.fingers[stuck.f], i = fob.at;
+      arm.B.wrist.getWorldPosition(_u);
+      fob.sd(pts.pos[i * 3], pts.pos[i * 3 + 1], pts.pos[i * 3 + 2], false, true, Infinity, _u);
+      // (no face of it on the wrist's side: its nearest way out)
+      if (!Number.isFinite(fob.out)) fob.sd(pts.pos[i * 3], pts.pos[i * 3 + 1], pts.pos[i * 3 + 2], false, true, Infinity);
+      const d = MARGIN - Math.min(stuck.g, fob.out);
+      if (this.debug) (st.log ||= []).push(['stuck', stuck.f, +(d * 1000).toFixed(2), fob.hit?.name, fob.n.toArray().map((v) => +v.toFixed(2))]);
       const T = _T.copy(ctx.T).addScaledVector(fob.n, d);
       st.moved += d; st.its++;
       ctx.resolve(T, ctx.wq);
       arm.root.updateWorldMatrix(true, true);
       ctx.T.copy(T);
-      ({ curl } = fingers());
+      out = fingers();
     }
+    const { curl } = out;
     arm.curl = curl;
+    arm.lift = free && ctx.T.distanceToSquared(T0) > 1e-12 ? ctx.T.clone().sub(T0) : null;
     return curl;
   }
 
@@ -563,5 +677,32 @@ function bisect(gap, lo, hi) {
     if (gap(m) > MARGIN) lo = m; else hi = m;
   }
   return lo;
+}
+// From c0 (in something), the nearest curl that is out: the range stepped through outward from c0 in
+// SCAN steps, straightening before curling at each distance, then the edge found by bisection. A finger
+// already straightened (or curled) out of the way looks that way first, and the other only if that has
+// no way out: it doesn't flip across. None out: the curl least in (stuck).
+const SCAN = 8;
+function nearestFree(gap, lo, hi, c0, prev) {
+  const d = (hi - lo) / SCAN;
+  let best = c0, bg = -Infinity;
+  const side = prev == null || Math.abs(prev - c0) < 0.01 ? 0 : Math.sign(prev - c0);
+  const order = side ? [[side], [-side]] : [[-1, 1]];
+  for (const sides of order) for (let k = 1; k <= SCAN; k++) {
+    for (const s of sides) {
+      const c = c0 + s * k * d;
+      if (c < lo - 1e-9 || c > hi + 1e-9) continue;
+      const g = gap(c);
+      if (g >= MARGIN) {
+        const inside = c0 + s * (k - 1) * d;
+        // (bisect wants the free end first)
+        let a = c, b = inside;
+        for (let i = 0; i < STEPS; i++) { const m = (a + b) / 2; if (gap(m) >= MARGIN) a = m; else b = m; }
+        return { c: a, g: MARGIN, stuck: false };
+      }
+      if (g > bg) { bg = g; best = c; }
+    }
+  }
+  return { c: best, g: bg, stuck: true };
 }
 export { CURL, MARGIN };

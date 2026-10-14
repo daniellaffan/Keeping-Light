@@ -1366,7 +1366,10 @@ export class Keeper {
     const pose = this.handPose();
     // each step of the inking takes the hand there in the step's own time
     const inkDur = this.ink ? Math.min(this.inkSteps()[this.ink.step][1], 0.9) : 0;
-    h.setPose(pose, this.ink ? inkDur : pose === 'write' || h.pose === 'write' ? 0.3 : this.state === 'lean' ? 0.45 : 0.6);
+    // leaning in, the hands come down beside the book as the body comes over it, not before (they'd be
+    // out of reach, dragged along behind the shoulders)
+    const arrive = this.state === 'lean-in' && this.blendT ? (1 - this.blendT.t) * this.blendT.dur : 0;
+    h.setPose(pose, this.ink ? inkDur : pose === 'write' || h.pose === 'write' ? 0.3 : this.state === 'lean' ? 0.45 : Math.max(0.6, arrive));
     // the writing tip: under the pointer on the page, lifted a hair unless pressing; inking, the nib
     if (this.state === 'lean' || this.state === 'review' || this.ink) {
       const bi = b.input;

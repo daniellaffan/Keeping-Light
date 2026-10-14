@@ -49,7 +49,7 @@ const BUDGET = { handsMs: 1.0, skinBuildGrowth: 1.1 };
 async function playwright() {
   try { return await import('playwright'); } catch { /* not installed here */ }
   const req = createRequire(process.env.PLAYWRIGHT_DIR || '/opt/node-tools/node_modules/');
-  return req('playwright');
+  try { return req('playwright'); } catch { return req('playwright-core'); }
 }
 
 async function serve() {
@@ -112,7 +112,7 @@ async function measureFocus() {
   const jobs = [];
   jobs.push(async () => { const p = await page(DUSK); D.holds = await evalIn(p, (hs) => { const H = window.__handcheck, o = {}; for (const pose of hs) o[pose] = H.hold(pose); return o; }, holds); await p.close(); });
   const duskPh = phases.filter((ph) => ph !== 'door' && ph !== 'stairs');
-  if (duskPh.length) jobs.push(async () => { const p = await page(DUSK); D.dusk = await evalIn(p, (only) => window.__handcheck.scenario('dusk', { only }), duskPh); await p.close(); });
+  if (duskPh.length) jobs.push(async () => { const p = await page(DUSK); D.dusk = await evalIn(p, (only) => window.__handcheck.scenario('dusk', { only }), duskPh); D.duskStill = D.dusk.still; await p.close(); });
   if (phases.includes('door')) jobs.push(async () => { const p = await page('night=5&phase=day'); D.door = await evalIn(p, () => window.__handcheck.scenario('door')); await p.close(); });
   if (phases.includes('stairs')) jobs.push(async () => { const p = await page('finale=stairs'); D.stairs = await evalIn(p, () => window.__handcheck.scenario('stairs')); await p.close(); });
   if (night) jobs.push(async () => { const p = await page('autoplay=1&speed=1&night=5&phase=day'); D.night = await evalIn(p, () => window.__handcheck.scenario('night')); await p.close(); });
@@ -276,11 +276,14 @@ function judge(D) {
     const ok = (!pm || pm[1].max <= THRESH.penetrationMm) && !cf.length && !w.ang.out.length;
     rows.push(['6 fuzz', ok, `${res.reduce((a, r) => a + r.frames, 0)} placements/frames; worst ${pm ? pm[0] + ' ' + pm[1].max.toFixed(1) + ' mm (' + pm[1].src + ')' : 'none'}; ${cf.length} contacts failing; ${w.ang.out.length} joints out`]);
   }
-  if (want('stability') && !D.focus) {
-    const still = Object.entries(holds).map(([p, h]) => [p, h.stillMm]).concat(D.duskStill ? [['lean (breathing)', D.duskStill.lean], ['chair (breathing)', D.duskStill.chair]] : []);
+  if (want('stability')) {
+    // (focused, the breathing that goes with its phases: leant in, or in the chair after the sip)
+    const mine = (ph) => !D.focus || INTERACTIONS.some(([n, i]) => n.includes(D.focus) && i.phases.includes(ph));
+    const breath = D.duskStill ? [['lean (breathing)', D.duskStill.lean, 'lean in'], ['chair (breathing)', D.duskStill.chair, 'mug']].filter(([, v, ph]) => v != null && mine(ph)).map(([n, v]) => [n, v]) : [];
+    const still = Object.entries(holds).map(([p, h]) => [p, h.stillMm]).concat(breath);
     const moving = still.filter(([, v]) => v > THRESH.holdMm);
     const same = D.repeat ? D.repeat[0] === D.repeat[1] : null;
-    rows.push(['7 stability', !moving.length && same !== false, `held hands move ${Math.max(0, ...still.map(([, v]) => v)).toFixed(4)} mm/frame at most${moving.length ? ' (' + moving.map(([p, v]) => p + ' ' + v).join(', ') + ')' : ''}; repeat runs ${same == null ? 'not run' : same ? 'identical' : 'DIFFER'}; solver iterations: no solver yet`]);
+    rows.push(['7 stability', !moving.length && same !== false, `held hands move ${Math.max(0, ...still.map(([, v]) => v)).toFixed(4)} mm/frame at most${moving.length ? ' (' + moving.map(([p, v]) => p + ' ' + v).join(', ') + ')' : ''}; repeat runs ${same == null ? 'not run' : same ? 'identical' : 'DIFFER'}; the solver moves a held hand at most ${Math.max(0, ...Object.values(holds).map((h) => h.moves ?? 0))} times a frame (never more than ${Object.values(holds)[0]?.moveLimit})`]);
   }
   if (want('speed') && D.speed) {
     const worstMean = Math.max(...['write', 'lamp', 'mug', 'lean'].map((p) => D.speed[p].mean));
@@ -334,7 +337,8 @@ async function main() {
     const srv = await serve();
     base = `http://localhost:${srv.port}`;
     const pw = await playwright();
-    browser = await pw.chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
+    // (CHROME: an installed Chrome to run instead of Playwright's own Chromium)
+    browser = await pw.chromium.launch({ executablePath: process.env.CHROME || undefined, args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
     try {
       D = await measureAll();
       if (SHOTS) D.shots = await shots(D);

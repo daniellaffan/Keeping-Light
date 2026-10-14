@@ -15,7 +15,7 @@
 // props, twist the forearm, and time things.
 import * as THREE from 'three';
 import { buildColliders, outline } from './colliders.js';
-import { classifySkin, LABELS } from './contact.js';
+import { classifySkin, LABELS, MOVES } from './contact.js';
 import { jointAngles, limits, ANATOMY } from './anatomy.js';
 import { CONTACTS, STEADY, THRESH } from './contacts.js';
 import { POSES, POSE_NAMES } from './hands.js';
@@ -581,9 +581,10 @@ export function installHandCheck(game) {
     lastBody = null;
     for (let i = 0; i < settle; i++) step(1 / 30);
     const R = new Recorder('hold ' + pose);
-    let still = 0, prevPos = null;
+    let still = 0, prevPos = null, moves = 0;
     for (let i = 0; i < frames; i++) {
       const cut = step(1 / 30);
+      for (const s of ['R', 'L']) moves = Math.max(moves, hands.contact?.stats[s].its ?? 0);
       const rec = measure({ contacts: true, ctx: ctxNow(), info: i === 0 });
       R.add(rec, { cut });
       // a held hand: how far its skin moved since the last frame
@@ -593,6 +594,7 @@ export function installHandCheck(game) {
     }
     const out = R.result();
     out.stillMm = +(still * MM).toFixed(4);
+    out.moves = moves; out.moveLimit = MOVES;
     return out;
   }
 
@@ -645,9 +647,13 @@ export function installHandCheck(game) {
         P.end();
         return last === name;
       };
+      // (held still once leant in, and in the chair after the sip: breathing only)
+      let still = null, stillChair = null;
+      const done = () => ({ phases: P.out, still: { lean: still, chair: stillChair } });
       k.setState('lean-in');
-      if (phase('lean in', 'none', 1 / 60, { until: () => k.state === 'lean' && hands.blend >= 1 && k.st > 0.6 })) return P.out;
-      const still = stillness(60, 1 / 30);
+      const leanLast = phase('lean in', 'none', 1 / 60, { until: () => k.state === 'lean' && hands.blend >= 1 && k.st > 0.6 });
+      still = stillness(60, 1 / 30);
+      if (leanLast) return done();
       // a stroke across the chart, then the pencil lifted
       const path = [[1000, 300], [1250, 420], [1380, 640], [1150, 780], [950, 600]];
       k.pointerOnPage = true; b.input.down = true;
@@ -656,25 +662,26 @@ export function installHandCheck(game) {
         onFrame: (t) => {
           if (t < 2.2) { const [x, y] = along(path, t / 2.2); b.input.x = x; b.input.y = y; } else if (b.input.down) { b.input.down = false; k.pointerOnPage = false; }
         },
-      })) return P.out;
+      })) return done();
       sc.flip(-1);
-      if (phase('turn back', 'leaf', 0.55 / 150, { until: (t) => !sc.flipAnim && t > 0.9 })) return P.out;
+      if (phase('turn back', 'leaf', 0.55 / 150, { until: (t) => !sc.flipAnim && t > 0.9 })) return done();
       sc.flip(1);
-      if (phase('turn forward', 'leaf', 0.55 / 150, { until: (t) => !sc.flipAnim && t > 0.9 })) return P.out;
+      if (phase('turn forward', 'leaf', 0.55 / 150, { until: (t) => !sc.flipAnim && t > 0.9 })) return done();
       sc.autoPlan(); sc.inkThePlan();
-      if (phase('ink', 'ink', 1 / 150, { until: () => k.state !== 'lean' && !k.ink, max: 40000 })) return P.out;
-      if (phase('lamp', 'lever', 1 / 150, { until: () => k.state === 'to-chair', max: 40000 })) return P.out;
-      if (phase('to the chair', 'none', 1 / 60, { until: () => k.state === 'chair' && k.blendT == null && k.st > 0.5, max: 40000 })) return P.out;
+      if (phase('ink', 'ink', 1 / 150, { until: () => k.state !== 'lean' && !k.ink, max: 40000 })) return done();
+      if (phase('lamp', 'lever', 1 / 150, { until: () => k.state === 'to-chair', max: 40000 })) return done();
+      if (phase('to the chair', 'none', 1 / 60, { until: () => k.state === 'chair' && k.blendT == null && k.st > 0.5, max: 40000 })) return done();
       k.sip = { t: 0, level: k.room.mug.userData.tea.position.y };
-      if (phase('mug', 'mug', 1 / 200, { until: (t) => !k.sip && t > 5.2, max: 40000 })) return P.out;
-      const stillChair = stillness(60, 1 / 30);
+      const mugLast = phase('mug', 'mug', 1 / 200, { until: (t) => !k.sip && t > 5.2, max: 40000 });
+      stillChair = stillness(60, 1 / 30);
+      if (mugLast) return done();
       game.onNightOver();
-      if (phase('dawn', 'none', 1 / 30, { until: () => k.state === 'dawn-chair' && k.st > 0.5, max: 2000 })) return P.out;
+      if (phase('dawn', 'none', 1 / 30, { until: () => k.state === 'dawn-chair' && k.st > 0.5, max: 2000 })) return done();
       k.toLogbook();
-      if (phase('rise', 'none', 1 / 60, { until: () => k.state === 'lean' && hands.blend >= 1 && k.st > 0.6, max: 40000 })) return P.out;
+      if (phase('rise', 'none', 1 / 60, { until: () => k.state === 'lean' && hands.blend >= 1 && k.st > 0.6, max: 40000 })) return done();
       sc.closeBook();
       phase('close', 'cover', 1 / 150, { until: () => k.state !== 'closing', max: 40000 });
-      return { phases: P.out, still: { lean: still, chair: stillChair } };
+      return done();
     },
     // the day: the hand takes the door's ring and pulls it open
     door() {

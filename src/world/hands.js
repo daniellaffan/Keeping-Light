@@ -305,36 +305,38 @@ export const POSES = {
     L: hand(RELAX, { frame: 'body', pos: [-0.24, -0.72, -0.12], align: [-1, 0.1, 0.3] }),
   },
   // leaning over the book: both hands flat on the table either side of it, never on the pages; the
-  // finger tips at most on the leather beyond them
+  // finger tips at most on the leather beyond them. (Tipped toward the fingers, the wrist up off the
+  // table: where the forearm coming down from the shoulder lets them lie.)
   lean: {
     R: hand(FLAT, { frame: 'book', pos: [0.43, 0.024, 0.23], rot: [0.0, 0.32, 0.03] }),
-    L: hand(FLAT, { frame: 'book', pos: [-0.405, 0.024, 0.12], rot: [0.0, 0.05, -0.03] }),
+    L: hand(FLAT, { frame: 'book', pos: [-0.412, 0.019, 0.127], rot: [0.37, 0.17, -0.03] }),
   },
   // ready to write: the same, the pencil lying in the right hand, which rests on its little-finger side
   ready: {
-    R: hand(TRIPOD, { frame: 'book', pos: [0.41, 0.038, 0.13], rot: [0.0, 0.42, -0.62], hold: 'pencil',
-      fingers: { index: [0, 0.51, 0.39, -0.13], middle: [-0.05, 0.63, 0.52, -0.29] }, thumb: [0.48, -0.48, 0.81, 0.02, -0.59] }),
-    L: hand(FLAT, { frame: 'book', pos: [-0.405, 0.024, 0.12], rot: [0.0, 0.05, -0.03] }),
+    R: hand(TRIPOD, { frame: 'book', pos: [0.41, 0.05, 0.2], rot: [0.0, 0.42, -0.62], hold: 'pencil',
+      fingers: { index: [-0.016, 0.51, 0.39, -0.077], middle: [0.952, 0.63, 0.464, -0.29], ring: [0, 1.31, 1.48, 0.75], little: [0.05, 1.57, 1.74, 0.88] },
+      thumb: [0.58, -0.38, 0.28, 0, -0.59] }),
+    L: hand(FLAT, { frame: 'book', pos: [-0.412, 0.019, 0.127], rot: [0.37, 0.17, -0.03] }),
   },
   // writing: the pencil tip is placed by IK under the cursor, the hand trailing behind it to the lower
   // right; the left hand stays where it was, beside the book
   write: {
     R: hand(TRIPOD, { frame: 'book', tip: true, hold: 'pencil', rot: [-0.08, 0.52, -0.55],
-      fingers: { index: [0, 0.51, 0.39, -0.13], middle: [-0.05, 0.63, 0.52, -0.29] }, thumb: [0.48, -0.48, 0.81, 0.02, -0.59] }),
-    L: hand(FLAT, { frame: 'book', pos: [-0.405, 0.024, 0.12], rot: [0.0, 0.05, -0.03] }),
+      fingers: { index: [-0.016, 0.51, 0.39, -0.077], middle: [0.952, 0.63, 0.464, -0.29] }, thumb: [0.58, -0.38, 0.28, 0, -0.59] }),
+    L: hand(FLAT, { frame: 'book', pos: [-0.412, 0.019, 0.127], rot: [0.37, 0.17, -0.03] }),
   },
   // the dip pen: held a little more upright, the same left hand
   pen: {
     R: hand(TRIPOD, { frame: 'book', tip: true, hold: 'pen', rot: [0.02, 0.38, -0.5],
       fingers: { index: [0, 0.48, 0.52, 0.06], middle: [-0.05, 0.5, 0.76, -0.14] }, thumb: [0.46, -0.42, 0.8, 0.05, -0.6] }),
-    L: hand(FLAT, { frame: 'book', pos: [-0.405, 0.024, 0.12], rot: [0.0, 0.05, -0.03] }),
+    L: hand(FLAT, { frame: 'book', pos: [-0.412, 0.019, 0.127], rot: [0.37, 0.17, -0.03] }),
   },
   // turning a page: the right hand's fingers slip under the near corner and lift it; the leaf goes over
   // on its own while the hand stays low, ready for the next
   turn: {
     R: hand(PINCH, { frame: 'book', pos: [0.31, 0.06, 0.2], rot: [0.25, 0.85, -0.25],
       fingers: { index: [0.02, 0.2, 0.25, 0.15], middle: [0, 0.3, 0.35, 0.2], ring: [0.02, 0.45, 0.5, 0.3], little: [0.06, 0.55, 0.6, 0.35] }, thumb: [0.45, 0.35, 0.3, 0.1, 0.05] }),
-    L: hand(FLAT, { frame: 'book', pos: [-0.405, 0.024, 0.12], rot: [0.0, 0.05, -0.03] }),
+    L: hand(FLAT, { frame: 'book', pos: [-0.412, 0.019, 0.127], rot: [0.37, 0.17, -0.03] }),
   },
   // closing the book at dawn: the left hand pinches the cover's edge (thumb on top) and lifts it until
   // it stands up; then lets it fall shut and goes back beside the book (the keeper decides when)
@@ -368,25 +370,25 @@ export const POSES = {
   // the pencil set down in the tray, point first
   'ink-tray': {
     R: hand(TRIPOD, { frame: 'trayPencil', grasp: 'pencil', hold: 'pencil',
-      fingers: { index: [0, 0.51, 0.39, -0.13], middle: [-0.05, 0.63, 0.52, -0.29] }, thumb: [0.48, -0.48, 0.81, 0.02, -0.59] }),
-    L: hand(FLAT, { frame: 'book', pos: [-0.405, 0.024, 0.12], rot: [0.0, 0.05, -0.03] }),
+      fingers: { index: [-0.016, 0.51, 0.39, -0.077], middle: [0.952, 0.63, 0.464, -0.29] }, thumb: [0.58, -0.38, 0.28, 0, -0.59] }),
+    L: hand(FLAT, { frame: 'book', pos: [-0.412, 0.019, 0.127], rot: [0.37, 0.17, -0.03] }),
   },
   // the hand round the inkwell, thumb over the top, to slide it in beside the book
   'ink-well': {
     R: hand(CUP, { frame: 'inkwell', pos: [0.036, 0.028, 0.004], at: [0.0, -0.018, -0.05], rot: [0.0, 0.35, -Math.PI / 2],
       fingers: { index: [0.05, 0.7, 0.7, 0.35], middle: [0, 0.78, 0.75, 0.38], ring: [0.03, 0.82, 0.8, 0.4], little: [0.08, 0.86, 0.82, 0.4] }, thumb: [0.3, 0.2, 0.2, 0.25, 0.3] }),
-    L: hand(FLAT, { frame: 'book', pos: [-0.405, 0.024, 0.12], rot: [0.0, 0.05, -0.03] }),
+    L: hand(FLAT, { frame: 'book', pos: [-0.412, 0.019, 0.127], rot: [0.37, 0.17, -0.03] }),
   },
   // fingers on the quill where it stands in the well; and the quill drawn up out of it
   'ink-take': {
     R: hand(TRIPOD, { frame: 'quillWell', grasp: 'pen', hold: 'pen',
       fingers: { index: [0, 0.48, 0.52, 0.06], middle: [-0.05, 0.5, 0.76, -0.14] }, thumb: [0.46, -0.42, 0.8, 0.05, -0.6] }),
-    L: hand(FLAT, { frame: 'book', pos: [-0.405, 0.024, 0.12], rot: [0.0, 0.05, -0.03] }),
+    L: hand(FLAT, { frame: 'book', pos: [-0.412, 0.019, 0.127], rot: [0.37, 0.17, -0.03] }),
   },
   'ink-lift': {
     R: hand(TRIPOD, { frame: 'quillUp', grasp: 'pen', hold: 'pen',
       fingers: { index: [0, 0.48, 0.52, 0.06], middle: [-0.05, 0.5, 0.76, -0.14] }, thumb: [0.46, -0.42, 0.8, 0.05, -0.6] }),
-    L: hand(FLAT, { frame: 'book', pos: [-0.405, 0.024, 0.12], rot: [0.0, 0.05, -0.03] }),
+    L: hand(FLAT, { frame: 'book', pos: [-0.412, 0.019, 0.127], rot: [0.37, 0.17, -0.03] }),
   },
   // debug only (the hands review's studio): held up before the face, fingers at ease
   show: {
@@ -422,7 +424,7 @@ export class Hands {
     this.tools = { pencil: this.pencil, pen: this.pen };
     // where each tool sits in the right wrist's frame for the tripod grip: shaft back over the
     // web of the thumb, tip out past the index pad
-    this.gripPencil = { pos: new THREE.Vector3(-0.024, -0.065, -0.152), rot: new THREE.Euler(0.82, -0.133, 0, 'YXZ') };
+    this.gripPencil = { pos: new THREE.Vector3(-0.028, -0.065, -0.152), rot: new THREE.Euler(0.9, -0.1368, 0, 'YXZ') };
     // the quill a touch more upright, its feather back over the hand
     this.gripPen = { pos: new THREE.Vector3(-0.024, -0.066, -0.15), rot: new THREE.Euler(0.68, -0.15, 0, 'YXZ') };
     for (const [t, gp] of [[this.pencil, this.gripPencil], [this.pen, this.gripPen]]) { t.position.copy(gp.pos); t.rotation.copy(gp.rot); }
@@ -539,7 +541,7 @@ export class Hands {
     if (this.lastBody && (body.pos.distanceTo(this.lastBody.pos) > 0.5 || body.quat.angleTo(this.lastBody.quat) > 1.0)) {
       this.lastBody = null; this.from = null; this.blend = 1;
       this.spring = { R: null, L: null };
-      for (const a of [this.R, this.L]) { a.pp = null; a.roll = null; a.curl = null; }
+      for (const a of [this.R, this.L]) { a.pp = null; a.roll = null; a.curl = null; a.lay = null; a.lift = null; }
       for (const s of ['R', 'L']) cur[s] = this.resolve(POSES[this.pose][s], s, frames, shoulders[s], poles[s]);
     }
     // What carries each hand's follower. A hand settled in a pose rides with that pose's frame (the
@@ -592,7 +594,9 @@ export class Hands {
         const d = tgt.clone().sub(sp.pos), l = d.length(), max = 1.5 * dt;
         sp.pos.addScaledVector(d, l > max ? max / l : 1);
         sp.vel.set(0, 0, 0);
-      } else follow(sp, tgt, P.tip ? 34 : 11, dt);
+      } else if (this.blend >= 1 && sp.tgt && sp.tgt.distanceToSquared(tgt) < 1e-14 && (sp.rest || calm(sp, tgt))) settle(sp, tgt, dt);
+      else { sp.rest = null; follow(sp, tgt, P.tip ? 34 : 11, dt); }
+      (sp.tgt ||= new THREE.Vector3()).copy(tgt);
       const T = sp.pos.clone();
       this.solve(arm, shoulders[s], T, t.quat, poles[s], dt, t.lead ?? 1);
       // a tool's point exactly where it's asked: if the wrist couldn't turn as far as the pose wanted
@@ -608,6 +612,8 @@ export class Hands {
       }
       this.fingers(arm, t);
       if (this.contact) {
+        // a tool in the hand (or being taken up) is the hand's: its fingers are posed round it, and keep
+        // out of the rest
         const hold = P.hold && this.inHand(P.hold) ? (P.hold === 'pen' ? 'quill' : 'pencil') : null;
         const skip = [hold, P.grasp === 'pen' ? 'quill' : P.grasp].filter(Boolean);
         // the grip of the pose the hand is going to comes in over the second half of the way there (the
@@ -618,11 +624,25 @@ export class Hands {
           if (this.blend >= 0.5) weight = smooth01((this.blend - 0.5) / 0.5);
           else { spec = gOut; weight = smooth01(1 - this.blend / 0.5); }
         }
-        const curl = this.contact.apply(s, arm, {
+        const ctx = {
           spec, weight, dt, t, T, tip, wq: t.quat,
-          skip, fingerSkip: [],
+          skip,
           resolve: (T2, q2) => this.solve(arm, shoulders[s], T2, q2 || t.quat, poles[s], 0, t.lead ?? 1),
-        });
+        };
+        let curl = this.contact.apply(s, arm, ctx);
+        // a hand at rest stays where it was laid, as a hand on a table does: while its target holds still
+        // and the body moves no more than a breath, it's kept as it was unless the solver's answer has
+        // moved on by more than a hair (so it doesn't creep as the body breathes). The arm is kept too: the
+        // shoulder, the elbow and the forearm's turn as they were, the forearm planted with the hand, not
+        // swayed by the breath.
+        const W = arm.B.wrist, L = arm.rest, still = sp.rest && sp.rest.t >= SETTLE;
+        W.updateWorldMatrix(true, false);
+        const wq = _q3.setFromRotationMatrix(W.matrixWorld);
+        if (L && L.pose === this.pose && !tip && still && L.S.distanceTo(shoulders[s]) < BREATH && L.p.distanceTo(T) < SLIP && L.q.angleTo(wq) < SLIP_TURN && near(L.curl, curl)) {
+          arm.pp.copy(L.pp); arm.roll = L.roll;
+          this.solve(arm, L.S, L.p, L.q, poles[s], 0, t.lead ?? 1);
+          curl = arm.curl = L.curl;
+        } else arm.rest = still ? { pose: this.pose, S: shoulders[s].clone(), pp: arm.pp.clone(), roll: arm.roll, p: T.clone(), q: wq.clone(), curl: { ...curl } } : null;
         this.fingers(arm, t, curl);
       }
       for (const [name, obj] of Object.entries(arm.held)) if (obj.parent === arm.B.wrist) obj.visible = t.hold === name && this.visible;
@@ -821,13 +841,32 @@ function clampWrist(q, side, share = null) {
 }
 
 // critically damped follow at angular frequency w (exact for a target held still over dt)
-const _d = new THREE.Vector3(), _v = new THREE.Vector3();
+const _d = new THREE.Vector3(), _v = new THREE.Vector3(), _q3 = new THREE.Quaternion();
+// how far a resting hand's solved place may move on before it is moved (m, rad, curl)
+const SLIP = 0.0005, SLIP_TURN = 0.009, SLIP_CURL = 0.02;
+const BREATH = 0.006;  // how far the shoulders rise and fall with a breath, and a little more (m)
+const near = (a, b) => Object.keys(b).every((f) => Math.abs((a[f] ?? 0) - b[f]) < SLIP_CURL);
 function follow(sp, target, w, dt) {
   const x0 = _d.copy(sp.pos).sub(target);
   const ex = Math.exp(-w * dt);
   const j = _v.copy(sp.vel).addScaledVector(x0, w);          // v0 + w·x0
   sp.vel.addScaledVector(j, -w * dt).multiplyScalar(ex);       // (v0 − w·j·t)·e^(−wt)
   sp.pos.copy(target).add(x0.addScaledVector(j, dt).multiplyScalar(ex));
+}
+
+// A follower whose target has stopped (a pose settled) comes the rest of the way in SETTLE seconds and is
+// then exactly there, still: what was left of its way and its speed eased out together (a cubic that
+// ends at the target, at rest). The spring alone would only ever get nearer.
+const SETTLE = 0.15;
+// (only once it's slowing into the target, slowly enough that the cubic can't carry it past)
+const calm = (sp, target) => sp.vel.length() * SETTLE <= 2 * sp.pos.distanceTo(target) && sp.vel.dot(_d.copy(sp.pos).sub(target)) <= 0;
+function settle(sp, target, dt) {
+  const r = sp.rest ||= { x: sp.pos.clone().sub(target), v: sp.vel.clone(), t: 0 };
+  r.t = Math.min(SETTLE, r.t + dt);
+  const s = r.t / SETTLE, a = 2 * s ** 3 - 3 * s * s + 1, b = (s ** 3 - 2 * s * s + s) * SETTLE;
+  const da = (6 * s * s - 6 * s) / SETTLE, db = 3 * s * s - 4 * s + 1;
+  sp.pos.copy(target).addScaledVector(r.x, a).addScaledVector(r.v, b);
+  sp.vel.copy(r.x).multiplyScalar(da).addScaledVector(r.v, db);
 }
 
 function mixFingers(a, b, e) {
