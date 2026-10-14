@@ -1,39 +1,44 @@
 // The keeper's forearms and hands: the only part of them ever seen.
 //
-// Each arm is one skinned mesh lofted along its bones: forearm, wrist, palm, three phalanges to each
-// finger, and a thumb with its CMC, MCP and IP joints. The jumper sleeve, pushed up to mid-forearm, is a
-// second skinned mesh on the same skeleton. Rest pose (arm space, metres): shoulder at the origin, the
-// arm straight along -Z, palm down, thumb toward -X (the right hand; the left is built mirrored).
+// Each arm is one skinned mesh: forearm, wrist, palm, three phalanges to each finger, and a thumb with
+// its CMC, MCP and IP joints, all one continuous skin (built as a distance field in handmesh.js: an old
+// man's hands, bony at the knuckles, the tendons and veins standing up on the back). The jumper sleeve,
+// pushed up to mid-forearm, is a second skinned mesh on the same skeleton. Rest pose (arm space,
+// metres): shoulder at the origin, the arm straight along -Z, palm down, thumb toward -X (the right
+// hand; the left is built mirrored). At rest the fingers are spread, so the skin between them could be
+// told apart when it was built; poses set every joint absolutely.
 //
 // Placing an arm: the wrist gets a target (position + orientation) from the current pose; a two-bone IK
 // from a shoulder fixed to the body finds the elbow, and the forearm's roll is shared between the elbow,
 // a twist bone at mid-forearm and the wrist so pronation never wrings the skin.
 import * as THREE from 'three';
 import { wash } from './materials.js';
+import { quill } from './inkwell.js';
 import { knitTex } from './textures.js';
 
-const UPPER = 0.30, FORE = 0.26;
-
-// Finger knuckles (wrist space), phalanx lengths, radii at knuckle / PIP / DIP / near the tip.
-const FINGERS = {
-  index: { base: [-0.026, 0.004, -0.084], len: [0.041, 0.025, 0.020], r: [0.0094, 0.0087, 0.0079, 0.0068], out: 1 },
-  middle: { base: [-0.007, 0.006, -0.088], len: [0.045, 0.028, 0.021], r: [0.0098, 0.0090, 0.0081, 0.0069], out: 0.25 },
-  ring: { base: [0.012, 0.004, -0.084], len: [0.042, 0.026, 0.020], r: [0.0093, 0.0085, 0.0077, 0.0065], out: -1 },
-  little: { base: [0.028, -0.001, -0.074], len: [0.033, 0.021, 0.018], r: [0.0081, 0.0074, 0.0067, 0.0057], out: -1 },
-};
-const FNAMES = ['index', 'middle', 'ring', 'little'];
-// The thumb leaves the palm low on the radial side, angled forward, out and down; its nail turned out.
-const THUMB = { base: [-0.020, -0.011, -0.020], rest: [-0.32, 0.78, 0.85], len: [0.044, 0.032, 0.027], r: [0.0145, 0.0112, 0.0101, 0.0086] };
+import { UPPER, FORE, FINGERS, FNAMES, THUMB, buildSkinData } from './handmesh.js';
 
 const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const lerp = (a, b, t) => a + (b - a) * t;
-// value along a joint chain at distance d, given values at the joints (and the end)
-function along(vals, joints, d) {
-  for (let i = 0; i < joints.length - 1; i++) {
-    if (d <= joints[i + 1]) return lerp(vals[i], vals[i + 1], (d - joints[i]) / (joints[i + 1] - joints[i]));
-  }
-  return vals[vals.length - 1];
+
+// The skin is built once, for the right hand at rest, and shared (mirrored) by both arms. Building it
+// takes a second or so, so the game starts it in a worker as it boots (prepareSkin) and waits for it
+// only when the keeper is made; anything that comes first without it builds it here instead.
+let SKIN = null, pending = null;
+export function prepareSkin() {
+  if (SKIN) return Promise.resolve();
+  if (pending) return pending;
+  pending = new Promise((resolve) => {
+    let w;
+    const here = () => { if (!SKIN) SKIN = buildSkinData(); resolve(); };
+    try { w = new Worker(new URL('./handmesh-worker.js', import.meta.url), { type: 'module' }); } catch { here(); return; }
+    w.onmessage = (e) => { SKIN ||= e.data; w.terminate(); resolve(); };
+    w.onerror = (e) => { e.preventDefault?.(); w.terminate(); here(); };
+    w.postMessage(0);
+  });
+  return pending;
 }
+export const SKIN_STATS = {};
 
 // ---------------------------------------------------------------------------------------------------
 // Geometry: rings of points along a bone chain, stitched into tubes, with bone weights and a tint.
@@ -112,12 +117,6 @@ function section(c, X, Y, rx, ry, n, e = 2.2, shape = null) {
   return pts;
 }
 
-// ---------------------------------------------------------------------------------------------------
-// Skin colour: warm flesh, cooler between the joints, pooling warmer and darker at the knuckles, paler
-// palm and nails. tint = [r, g, b, stain]
-const KNUCKLE = [0.9, 0.8, 0.8], COOL = [0.97, 0.98, 1.03], PALM = [1.05, 1.0, 0.95], NAIL = [1.1, 1.04, 1.02];
-function mixT(a, b, t) { return [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)]; }
-
 export class Arm {
   constructor(side, mats) {
     this.side = side;            // 1 right, -1 left
@@ -144,7 +143,7 @@ export class Arm {
     mk('wrist', B.twist, [0, 0, -FORE / 2]);
     for (const f of FNAMES) {
       const F = FINGERS[f];
-      mk(f + '1', B.wrist, F.base);
+      mk(f + '1', B.wrist, F.base, [0, F.fan, 0]);
       mk(f + '2', B[f + '1'], [0, 0, -F.len[0]]);
       mk(f + '3', B[f + '2'], [0, 0, -F.len[1]]);
     }
@@ -176,132 +175,27 @@ export class Arm {
   // rest-pose world transform of a bone (arm space) — used to place lofted rings
   restMatrix(name) { this.B[name].updateMatrixWorld(true); return this.B[name].matrixWorld.clone(); }
 
+  // The skin: one surface for forearm, hand, fingers and thumb (handmesh.js), meshed once for the right
+  // hand and mirrored for the left.
   buildSkin() {
-    const L = new Loft();
-    const side = this.side, right = side > 0;
-    const V = (x, y, z) => new THREE.Vector3(x, y, z);
-    const N = 14;
-
-    // ---- forearm and palm, one surface: elbow → wrist (flattening, the ulnar head showing) → knuckles ----
-    const iE = this.i('elbow'), iT = this.i('twist'), iW = this.i('wrist'), iS = this.i('shoulder');
-    const W0 = -UPPER - FORE;
-    const knX = FNAMES.map((f) => FINGERS[f].base[0]);
-    const knZ = FNAMES.map((f) => FINGERS[f].base[2] + 0.009);
-    const zEnd = (x) => {
-      if (x <= knX[0]) return knZ[0] + (x - knX[0]) * 0.2;
-      for (let i = 0; i < 3; i++) if (x <= knX[i + 1]) return lerp(knZ[i], knZ[i + 1], (x - knX[i]) / (knX[i + 1] - knX[i]));
-      return knZ[3] + (x - knX[3]) * 0.9;
-    };
-    {
-      const NA = 20;
-      const rings = [];
-      const tintAt = (k, kn) => { const a = k / NA * Math.PI * 2, dorsal = Math.sin(a); return [...mixT(mixT(PALM, COOL, Math.max(0, dorsal) * 0.8 + 0.2), KNUCKLE, kn * Math.max(0, dorsal) * 0.9), 0]; };
-      // forearm
-      for (let z = 0.04; z > -FORE + 0.004; z -= 0.01) {
-        const u = Math.min(1, Math.max(0, -z / FORE));
-        const bulge = Math.exp(-Math.pow((u - 0.22) / 0.25, 2));
-        const rx = lerp(0.039, 0.0292, sstep(0.1, 1, u)) + bulge * 0.004;
-        const ry = lerp(0.035, 0.0178, sstep(0.05, 1, u)) + bulge * 0.004;
-        const pts = section(V(0, -0.002 * u, -UPPER + z), V(1, 0, 0), V(0, 1, 0), rx, ry, NA, 2.1 + u * 0.9, (x, y) => {
-          // the head of the ulna, on the little-finger side of the back of the wrist
-          const b = Math.exp(-Math.pow((u - 0.93) / 0.05, 2)) * 0.0028;
-          if (x > 0.01 && y > 0) { x += b * 0.6; y += b; }
-          return [x, y];
-        });
-        const w = [[iE, Math.max(0, 1 - u * 1.05)], [iT, u < 0.5 ? u * 1.8 : 1 - sstep(0.8, 1, u) * 0.5], [iW, sstep(0.86, 1.0, u) * 0.5], [iS, sstep(0.0, 0.04, z) * 0.5]];
-        rings.push({ pts, w, tint: (k) => tintAt(k, 0) });
-      }
-      // palm: a flattened box out to the slanted knuckle line, fuller at the thenar and hypothenar
-      const NS = 10;
-      for (let j = 0; j <= NS; j++) {
-        const v = j / NS;
-        const rx = lerp(0.0292, 0.0425, sstep(0, 0.75, v));
-        const ry = lerp(0.0178, 0.0135, v);
-        const pts = section(V(0.001 * v, -0.002 + v * 0.004, 0), V(1, 0, 0), V(0, 1, 0), rx, ry, NA, lerp(3.0, 3.3, v), (x, y) => {
-          if (y < 0) {
-            y -= 0.0055 * Math.exp(-Math.pow((x + 0.018) / 0.012, 2)) * Math.sin(Math.PI * Math.min(1, v * 1.3));
-            y -= 0.0025 * Math.exp(-Math.pow((x - 0.025) / 0.01, 2)) * Math.sin(Math.PI * v);
-          } else y += 0.002 * (1 - Math.pow(x / 0.045, 2)) * v;
-          return [x, y];
-        });
-        for (const p of pts) p.z = W0 + lerp(0.0, zEnd(p.x), v);
-        const fingerW = (p) => {
-          // the knuckle end of the palm moves a little with the nearest finger
-          let best = 0, bd = 1;
-          for (let i = 0; i < 4; i++) { const d = Math.abs(p.x - knX[i]); if (d < bd) { bd = d; best = i; } }
-          return [[iW, 1], [this.i(FNAMES[best] + '1'), sstep(0.7, 1, v) * 0.35], [iT, (1 - sstep(0, 0.2, v)) * 0.6]];
-        };
-        rings.push({ pts, w: (k) => fingerW(pts[k]), tint: (k) => tintAt(k, sstep(0.75, 1, v)) });
-      }
-      L.tube(rings, { capEnd: true });
+    if (!SKIN) SKIN = buildSkinData();
+    Object.assign(SKIN_STATS, SKIN.stats);
+    const g = new THREE.BufferGeometry();
+    const pos = SKIN.pos.slice(), nor = SKIN.nor.slice(), idx = SKIN.idx.slice();
+    if (this.mirror) {
+      for (let i = 0; i < pos.length; i += 3) { pos[i] = -pos[i]; nor[i] = -nor[i]; }
+      for (let i = 0; i < idx.length; i += 3) { const t = idx[i + 1]; idx[i + 1] = idx[i + 2]; idx[i + 2] = t; }
     }
-    // ---- fingers and thumb: tubes along each chain, rounded at the tip ----
-    const chain = (prefix, base, len, r, mtx, { thumb = false, smudge = false, stainAmt = 0 } = {}) => {
-      const joints = [0, len[0], len[0] + len[1], len[0] + len[1] + len[2]];
-      const total = joints[3];
-      const i1 = this.i(prefix + '1'), i2 = this.i(prefix + '2'), i3 = this.i(prefix + '3');
-      const rings = [];
-      const start = thumb ? -0.016 : -0.011;
-      const stations = [];
-      for (let d = start; d < total - 0.009; d += 0.0035) stations.push(d);
-      // rounded tip
-      for (let k = 0; k <= 5; k++) stations.push(total - 0.009 + (k / 5) * 0.009);
-      const NF = 12;
-      for (const d of stations) {
-        let rr = along([r[0] * (thumb ? 1.05 : 1), r[0], r[1], r[2], r[3]], [start, 0, joints[1], joints[2], total - 0.006], d);
-        const tipT = (d - (total - 0.009)) / 0.009;
-        if (tipT > 0) rr *= Math.sqrt(Math.max(0, 1 - tipT * tipT)) * 0.98 + 0.0001;
-        // the back of each joint stands proud; the pads between are fuller on the palm side
-        let knuckle = 0;
-        for (let j = 0; j < 3; j++) knuckle += Math.exp(-Math.pow((d - joints[j]) / 0.0045, 2)) * (j === 0 ? 0.0018 : 0.0011);
-        const seg = d < joints[1] ? 0 : d < joints[2] ? 1 : 2;
-        const segT = seg === 0 ? d / len[0] : seg === 1 ? (d - joints[1]) / len[1] : (d - joints[2]) / len[2];
-        const pad = Math.sin(Math.PI * Math.min(1, Math.max(0, segT))) * 0.0009;
-        const c = new THREE.Vector3(0, 0, -d).applyMatrix4(mtx);
-        const X = new THREE.Vector3(1, 0, 0).transformDirection(mtx), Y = new THREE.Vector3(0, 1, 0).transformDirection(mtx);
-        const pts = section(c, X, Y, rr * 1.07, rr * 0.93, NF, 2.3, (x, y) => [x, y > 0 ? y + knuckle * (y / (rr * 0.93)) : y - pad * (-y / (rr * 0.93))]);
-        // weights: each phalanx to its bone, blended across the joints; the root into the palm
-        const b1 = sstep(joints[1] - 0.004, joints[1] + 0.004, d), b2 = sstep(joints[2] - 0.004, joints[2] + 0.004, d);
-        const root = 1 - sstep(start, 0.003, d);
-        const w = [[i1, (1 - b1) * (1 - root * 0.6)], [i2, b1 * (1 - b2)], [i3, b2], [iW, root * 0.6]];
-        const tintFn = (k) => {
-          const a = k / NF * Math.PI * 2, sa = Math.sin(a), ca = Math.cos(a);
-          let t = mixT(sa < 0 ? PALM : COOL, COOL, 0.4);
-          // pooling at the knuckles, on the back
-          let kn = 0;
-          for (let j = 0; j < 3; j++) kn += Math.exp(-Math.pow((d - joints[j]) / 0.006, 2));
-          t = mixT(t, KNUCKLE, Math.min(1, kn) * (0.35 + 0.65 * Math.max(0, sa)));
-          // the nail
-          if (seg === 2 && sa > 0.45 && d > total - 0.013 && d < total - 0.0015) t = mixT(t, NAIL, 0.85);
-          let stain = 0;
-          // graphite rubbed into the side of the little finger, where it drags across the page
-          if (smudge) t = mixT(t, [0.72, 0.73, 0.78], Math.max(0, ca) * Math.max(0, -sa + 0.4) * sstep(-0.005, 0.02, d) * 0.75);
-          // ink: pads of the writing fingers and the side the pen rests on
-          if (stainAmt > 0) stain = stainAmt * sstep(total * 0.55, total, d) * (0.4 + 0.6 * Math.max(0, -sa) + (thumb ? 0.3 : Math.max(0, -ca) * 0.4));
-          return [...t, stain];
-        };
-        rings.push({ pts, w, tint: tintFn });
-      }
-      const last = rings[rings.length - 1];
-      const tipPt = new THREE.Vector3(0, -0.0006, -total - 0.0002).applyMatrix4(mtx);
-      L.tube(rings, { capEnd: true, endPoint: tipPt });
-    };
-    // fingers are built in their knuckle frames (rest: aligned with the arm)
-    const wristM = new THREE.Matrix4().makeTranslation(0, 0, W0);
-    for (const f of FNAMES) {
-      const F = FINGERS[f];
-      const m = wristM.clone().multiply(new THREE.Matrix4().makeTranslation(...F.base));
-      chain(f, F.base, F.len, F.r, m, {
-        smudge: right && f === 'little',
-        stainAmt: right ? (f === 'index' ? 1 : f === 'middle' ? 0.8 : 0) : (f === 'index' ? 0.25 : 0),
-      });
-    }
-    // the thumb in its own frame, turned out from the palm
-    const tq = new THREE.Quaternion().setFromEuler(new THREE.Euler(THUMB.rest[0], THUMB.rest[1], THUMB.rest[2], 'YXZ'));
-    const tm = wristM.clone().multiply(new THREE.Matrix4().compose(new THREE.Vector3(...THUMB.base), tq, new THREE.Vector3(1, 1, 1)));
-    chain('thumb', THUMB.base, THUMB.len, THUMB.r, tm, { thumb: true, stainAmt: right ? 0.9 : 0 });
-
-    return L.geometry(this.mirror);
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+    g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(pos.length / 3 * 2), 2));
+    g.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(SKIN.si, 4));
+    g.setAttribute('skinWeight', new THREE.Float32BufferAttribute(SKIN.sw, 4));
+    g.setAttribute('tint', new THREE.Float32BufferAttribute(this.mirror ? SKIN.tintL : SKIN.tint, 4));
+    g.setAttribute('skin', new THREE.Float32BufferAttribute(SKIN.skin, 4));
+    g.setIndex(new THREE.BufferAttribute(idx, 1));
+    g.computeBoundingSphere();
+    return g;
   }
 
   // the sleeve of a wool jumper pushed up the forearm: bunched in soft folds, a rolled edge
@@ -314,7 +208,9 @@ export class Arm {
     const seed = this.side > 0 ? 0.3 : 1.7;
     const rings = [];
     const zs = [];
-    for (let z = 0.16; z > end + 0.012; z -= 0.008) zs.push({ z, inner: 0 });
+    // all the way up to the shoulder (seen from above, standing at the table), rounded off over it
+    for (let k = 0; k < 6; k++) zs.push({ z: UPPER + 0.036 * Math.cos((k / 6) * Math.PI / 2) * (k ? 1 : 0.98), inner: 0 });
+    for (let z = UPPER; z > end + 0.012; z -= 0.008) zs.push({ z, inner: 0 });
     // the rolled cuff: out over the edge and back inside
     for (let k = 0; k <= 6; k++) zs.push({ z: end + 0.012 - Math.sin((k / 6) * Math.PI / 2) * 0.012, roll: k / 6 });
     for (let k = 1; k <= 4; k++) zs.push({ z: end + (k / 4) * 0.03, inner: k / 4 });
@@ -330,7 +226,10 @@ export class Arm {
       if (s.roll != null) grow += 0.004 + Math.sin(s.roll * Math.PI) * 0.005 - s.roll * 0.006;
       if (s.inner) grow = 0.006 - s.inner * 0.004;
       const c = V(0, 0.002, -UPPER + z);
-      const pts = section(c, V(1, 0, 0), V(0, 1, 0), arx + grow, ary + grow, N, 2.0, (x, y, a) => {
+      // the shoulder: fuller, and domed over the top
+      const sh = sstep(0.16, UPPER, z) * 0.012;
+      const dome = z > UPPER ? Math.sqrt(Math.max(0.004, 1 - Math.pow((z - UPPER) / 0.036, 2))) : 1;
+      const pts = section(c, V(1, 0, 0), V(0, 1, 0), (arx + grow + sh) * dome, (ary + grow + sh) * dome, N, 2.0, (x, y, a) => {
         if (s.inner) return [x, y];
         // folds: rings of slack that wander round the arm
         const f = Math.sin(z * 210 + Math.sin(a * 2 + seed) * 1.6 + seed) * 0.5 + 0.5;
@@ -342,7 +241,7 @@ export class Arm {
       const w = [[iS, sstep(0.0, 0.08, z)], [iE, 1 - sstep(0.0, 0.08, z)], [iT, u * 0.8]];
       rings.push({ pts, w, tint: () => [1, 1, 1, 0], uv: (k) => [k / N * 3, z * 9] });
     }
-    L.tube(rings);
+    L.tube(rings, { capStart: true, startPoint: V(0, 0.002, 0.036) });
     return L.geometry(this.mirror);
   }
 
@@ -356,7 +255,7 @@ export class Arm {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// Things held: a pencil, the dip pen. Each knows where its working tip is in wrist space.
+// Things held: a pencil, and the quill (inkwell.js). Each has its working point at its origin.
 function pencil(mats) {
   const g = new THREE.Group();
   const body = new THREE.Mesh(new THREE.CylinderGeometry(0.0036, 0.0036, 0.13, 6).translate(0, 0.065 + 0.018, 0), mats.pencil);
@@ -369,17 +268,6 @@ function pencil(mats) {
   return g;
 }
 
-function dipPen(mats) {
-  const g = new THREE.Group();
-  const holder = new THREE.Mesh(new THREE.CylinderGeometry(0.0042, 0.0034, 0.14, 8).translate(0, 0.07 + 0.026, 0), mats.penwood);
-  const ferrule = new THREE.Mesh(new THREE.CylinderGeometry(0.0034, 0.003, 0.012, 8).translate(0, 0.02, 0), mats.steel);
-  const nibShape = new THREE.Shape();
-  nibShape.moveTo(-0.0026, 0.014); nibShape.lineTo(0.0026, 0.014); nibShape.lineTo(0.0004, 0.0); nibShape.lineTo(-0.0004, 0.0);
-  const nib = new THREE.Mesh(new THREE.ShapeGeometry(nibShape), mats.nib);
-  g.add(holder, ferrule, nib);
-  g.userData.tip = new THREE.Vector3(0, 0, 0);
-  return g;
-}
 
 // ---------------------------------------------------------------------------------------------------
 // Poses. A pose sets, for each hand, where the wrist goes (in some frame: the body, the book, the
@@ -402,43 +290,52 @@ const hand = (base, extra) => ({ ...base, ...extra, fingers: { ...base.fingers, 
 export const POSES = {
   // walking: hands low at the sides, barely in view; they swing with the pace
   walk: {
-    R: hand(RELAX, { frame: 'body', pos: [0.24, -0.66, -0.3], rot: [0.75, 0.1, -1.35], swing: 1 }),
-    L: hand(RELAX, { frame: 'body', pos: [-0.24, -0.66, -0.3], rot: [0.75, -0.1, 1.35], swing: -1 }),
+    R: hand(RELAX, { frame: 'body', pos: [0.24, -0.66, -0.3], align: [1, 0.1, 0.3], swing: 1 }),
+    L: hand(RELAX, { frame: 'body', pos: [-0.24, -0.66, -0.3], align: [-1, 0.1, 0.3], swing: -1 }),
   },
   // reaching for the door's iron ring
   door: {
     R: hand(GRIP, { frame: 'door', pos: [0, -0.01, 0.05], rot: [0.0, 0.0, -1.45], thumb: [0.7, 0.0, 0.5, 0.5, 0.4] }),
-    L: hand(RELAX, { frame: 'body', pos: [-0.24, -0.72, -0.12], rot: [0.9, 0.0, 1.35] }),
+    L: hand(RELAX, { frame: 'body', pos: [-0.24, -0.72, -0.12], align: [-1, 0.1, 0.3] }),
   },
-  // leaning over the book, hands on its lower corners keeping the pages down
+  // leaning over the book: both hands flat on the table either side of it, never on the pages; the
+  // finger tips at most on the leather beyond them
   lean: {
-    R: hand(FLAT, { frame: 'book', pos: [0.3, 0.05, 0.2], rot: [-0.04, 0.5, 0.04] }),
-    L: hand(FLAT, { frame: 'book', pos: [-0.3, 0.05, 0.2], rot: [-0.04, -0.5, -0.04] }),
+    R: hand(FLAT, { frame: 'book', pos: [0.405, 0.024, 0.12], rot: [0.0, 0.32, 0.03] }),
+    L: hand(FLAT, { frame: 'book', pos: [-0.405, 0.024, 0.12], rot: [0.0, 0.05, -0.03] }),
   },
-  // writing: the pencil tip is placed by IK under the cursor; the left hand holds the page flat
+  // ready to write: the same, the pencil lying in the right hand, which rests on its little-finger side
+  ready: {
+    R: hand(TRIPOD, { frame: 'book', pos: [0.41, 0.038, 0.13], rot: [0.0, 0.42, -0.62], hold: 'pencil',
+      fingers: { index: [0, 0.51, 0.39, -0.13], middle: [-0.05, 0.63, 0.52, -0.29] }, thumb: [0.48, -0.48, 0.81, 0.02, -0.59] }),
+    L: hand(FLAT, { frame: 'book', pos: [-0.405, 0.024, 0.12], rot: [0.0, 0.05, -0.03] }),
+  },
+  // writing: the pencil tip is placed by IK under the cursor, the hand trailing behind it to the lower
+  // right; the left hand stays where it was, beside the book
   write: {
-    R: hand(TRIPOD, { frame: 'book', tip: true, hold: 'pencil', rot: [-0.08, 0.42, -0.55],
-      fingers: { index: [0, 0.47, 0.52, 0.47], middle: [-0.05, 0.43, 0.86, 0.2] }, thumb: [0.46, -0.43, 0.52, 0.05, -0.6] }),
-    L: hand(FLAT, { frame: 'book', pos: [-0.2, 0.052, 0.16], rot: [-0.04, -0.25, -0.04] }),
+    R: hand(TRIPOD, { frame: 'book', tip: true, hold: 'pencil', rot: [-0.08, 0.52, -0.55],
+      fingers: { index: [0, 0.51, 0.39, -0.13], middle: [-0.05, 0.63, 0.52, -0.29] }, thumb: [0.48, -0.48, 0.81, 0.02, -0.59] }),
+    L: hand(FLAT, { frame: 'book', pos: [-0.405, 0.024, 0.12], rot: [0.0, 0.05, -0.03] }),
   },
   // the dip pen: held a little more upright, the same left hand
   pen: {
     R: hand(TRIPOD, { frame: 'book', tip: true, hold: 'pen', rot: [0.02, 0.38, -0.5],
       fingers: { index: [0, 0.48, 0.52, 0.06], middle: [-0.05, 0.5, 0.76, -0.14] }, thumb: [0.46, -0.42, 0.8, 0.05, -0.6] }),
-    L: hand(FLAT, { frame: 'book', pos: [-0.2, 0.052, 0.16], rot: [-0.04, -0.25, -0.04] }),
+    L: hand(FLAT, { frame: 'book', pos: [-0.405, 0.024, 0.12], rot: [0.0, 0.05, -0.03] }),
   },
   // turning a page: the right hand's fingers slip under the near corner and lift it; the leaf goes over
   // on its own while the hand stays low, ready for the next
   turn: {
     R: hand(PINCH, { frame: 'book', pos: [0.31, 0.06, 0.2], rot: [0.25, 0.85, -0.25],
       fingers: { index: [0.02, 0.2, 0.25, 0.15], middle: [0, 0.3, 0.35, 0.2], ring: [0.02, 0.45, 0.5, 0.3], little: [0.06, 0.55, 0.6, 0.35] }, thumb: [0.45, 0.35, 0.3, 0.1, 0.05] }),
-    L: hand(FLAT, { frame: 'book', pos: [-0.3, 0.05, 0.2], rot: [-0.04, -0.5, -0.04] }),
+    L: hand(FLAT, { frame: 'book', pos: [-0.405, 0.024, 0.12], rot: [0.0, 0.05, -0.03] }),
   },
-  // closing the book at dawn: the left hand under the cover's edge, palm up, bringing it over
+  // closing the book at dawn: the left hand pinches the cover's edge (thumb on top) and lifts it until
+  // it stands up; then lets it fall shut and goes back beside the book (the keeper decides when)
   close: {
-    R: hand(FLAT, { frame: 'book', pos: [0.3, 0.05, 0.2], rot: [-0.04, 0.5, 0.04] }),
-    L: hand(FLAT, { frame: 'lid', pos: [0.02, -0.045, -0.05], rot: [-0.3, -1.57, 3.14],
-      fingers: { index: [0.03, 0.02, 0.05, 0.02], middle: [0, 0.02, 0.05, 0.02], ring: [0.03, 0.04, 0.06, 0.03], little: [0.08, 0.06, 0.08, 0.04] } }),
+    R: hand(FLAT, { frame: 'book', pos: [0.405, 0.024, 0.12], rot: [0.0, 0.32, 0.03] }),
+    L: hand(FLAT, { frame: 'lid', pos: [-0.031, -0.006, 0.0], at: [0.004, -0.012, -0.165], rot: [-0.1, -0.22, -0.7],
+      fingers: { index: [0.04, 0.3, 0.35, 0.2], middle: [0, 0.32, 0.38, 0.22], ring: [0.04, 0.36, 0.4, 0.24], little: [0.1, 0.4, 0.44, 0.26] }, thumb: [0.1, 0.15, 0.1, 0.15, 0.2] }),
   },
   // in the chair: forearms along the arms, hands loose over the ends
   chair: {
@@ -452,13 +349,43 @@ export const POSES = {
   },
   // pulling the lamp control's lever down
   lamp: {
-    R: hand(GRIP, { frame: 'lever', pos: [0.05, 0.035, 0.0], rot: [0.0, 1.57, 0.0] }),
-    L: hand(RELAX, { frame: 'body', pos: [-0.24, -0.7, -0.14], rot: [0.9, 0.0, 1.35] }),
+    R: hand(CUP, { frame: 'lever', pos: [0.0, 0.036, -0.06], at: [0.0, -0.018, -0.058], rot: [-0.05, 3.99, 1.05],
+      fingers: { index: [0.06, 0.7, 0.75, 0.45], middle: [0, 0.72, 0.8, 0.45], ring: [0.04, 0.75, 0.82, 0.45], little: [0.1, 0.8, 0.85, 0.45] }, thumb: [0.35, 0.3, 0.3, 0.3, 0.35] }),
+    L: hand(RELAX, { frame: 'body', pos: [-0.24, -0.7, -0.14], align: [-1, 0.1, 0.3] }),
   },
   // climbing: the right hand slides up the rail, the left steadies against the wall
   rail: {
     R: hand(GRIP, { frame: 'rail', pos: [0.0, 0.02, 0.0], rot: [0.1, 0.0, -0.2], fingers: { index: [0, 0.9, 1.0, 0.55], middle: [0, 1.0, 1.1, 0.6] } }),
-    L: hand(RELAX, { frame: 'body', pos: [-0.24, -0.7, -0.1], rot: [0.9, 0.0, 1.35] }),
+    L: hand(RELAX, { frame: 'body', pos: [-0.24, -0.7, -0.1], align: [-1, 0.1, 0.3] }),
+  },
+  // inking the plan, step by step (the keeper runs them in turn; the left hand stays beside the book):
+  // the pencil set down in the tray, point first
+  'ink-tray': {
+    R: hand(TRIPOD, { frame: 'trayPencil', grasp: 'pencil', hold: 'pencil',
+      fingers: { index: [0, 0.51, 0.39, -0.13], middle: [-0.05, 0.63, 0.52, -0.29] }, thumb: [0.48, -0.48, 0.81, 0.02, -0.59] }),
+    L: hand(FLAT, { frame: 'book', pos: [-0.405, 0.024, 0.12], rot: [0.0, 0.05, -0.03] }),
+  },
+  // the hand round the inkwell, thumb over the top, to slide it in beside the book
+  'ink-well': {
+    R: hand(CUP, { frame: 'inkwell', pos: [0.036, 0.028, 0.004], at: [0.0, -0.018, -0.05], rot: [0.0, 0.35, -Math.PI / 2],
+      fingers: { index: [0.05, 0.7, 0.7, 0.35], middle: [0, 0.78, 0.75, 0.38], ring: [0.03, 0.82, 0.8, 0.4], little: [0.08, 0.86, 0.82, 0.4] }, thumb: [0.3, 0.2, 0.2, 0.25, 0.3] }),
+    L: hand(FLAT, { frame: 'book', pos: [-0.405, 0.024, 0.12], rot: [0.0, 0.05, -0.03] }),
+  },
+  // fingers on the quill where it stands in the well; and the quill drawn up out of it
+  'ink-take': {
+    R: hand(TRIPOD, { frame: 'quillWell', grasp: 'pen', hold: 'pen',
+      fingers: { index: [0, 0.48, 0.52, 0.06], middle: [-0.05, 0.5, 0.76, -0.14] }, thumb: [0.46, -0.42, 0.8, 0.05, -0.6] }),
+    L: hand(FLAT, { frame: 'book', pos: [-0.405, 0.024, 0.12], rot: [0.0, 0.05, -0.03] }),
+  },
+  'ink-lift': {
+    R: hand(TRIPOD, { frame: 'quillUp', grasp: 'pen', hold: 'pen',
+      fingers: { index: [0, 0.48, 0.52, 0.06], middle: [-0.05, 0.5, 0.76, -0.14] }, thumb: [0.46, -0.42, 0.8, 0.05, -0.6] }),
+    L: hand(FLAT, { frame: 'book', pos: [-0.405, 0.024, 0.12], rot: [0.0, 0.05, -0.03] }),
+  },
+  // debug only (the hands review's studio): held up before the face, fingers at ease
+  show: {
+    R: hand(RELAX, { frame: 'body', pos: [0.1, -0.12, -0.36], rot: [0.5, 0.25, 0.1] }),
+    L: hand(RELAX, { frame: 'body', pos: [-0.24, -0.7, -0.14], align: [-1, 0.1, 0.3] }),
   },
 };
 export const POSE_NAMES = Object.keys(POSES);
@@ -468,7 +395,7 @@ export const POSE_NAMES = Object.keys(POSES);
 export class Hands {
   constructor() {
     this.mats = {
-      flesh: wash({ color: '#D9A88A', color2: '#C99683', tint: true, line: 1, crease: 0.22, gran: 0.35, turb: 0.6, noiseScale: 45, stain: 0.2 }),
+      flesh: wash({ color: '#D6A48A', color2: '#C48F80', tint: true, skin: true, band: 0.38, bare: 0.45, line: 1, crease: 0.22, gran: 0.35, turb: 0.6, noiseScale: 45, stain: 0.2 }),
       wool: wash({ color: '#3C4A62', color2: '#323E55', map: knitTex(), mapAmt: 0.9, line: 1, crease: 0.55, gran: 1.0, turb: 0.9, noiseScale: 40 }),
       pencil: wash({ color: '#3F5E3B', color2: '#36523A', line: 1, crease: 0.4, gran: 0.4, noiseScale: 60 }),
       wood: wash({ color: '#D9BC8E', line: 1, crease: 0.3, gran: 0.6, noiseScale: 80 }),
@@ -483,20 +410,21 @@ export class Hands {
     this.group.name = 'hands';
     this.group.add(this.R.root, this.L.root);
     this.pencil = pencil(this.mats);
-    this.pen = dipPen(this.mats);
+    this.pen = quill();
     this.R.hold('pencil', this.pencil);
     this.R.hold('pen', this.pen);
     this.tools = { pencil: this.pencil, pen: this.pen };
     // where each tool sits in the right wrist's frame for the tripod grip: shaft back over the
     // web of the thumb, tip out past the index pad
-    this.gripPencil = { pos: new THREE.Vector3(-0.03, -0.058, -0.148), rot: new THREE.Euler(0.96, -0.05, 0, 'YXZ') };
-    this.gripPen = { pos: new THREE.Vector3(-0.03, -0.062, -0.15), rot: new THREE.Euler(0.9, -0.05, 0, 'YXZ') };
+    this.gripPencil = { pos: new THREE.Vector3(-0.024, -0.065, -0.152), rot: new THREE.Euler(0.82, -0.133, 0, 'YXZ') };
+    // the quill a touch more upright, its feather back over the hand
+    this.gripPen = { pos: new THREE.Vector3(-0.024, -0.066, -0.15), rot: new THREE.Euler(0.68, -0.15, 0, 'YXZ') };
     for (const [t, gp] of [[this.pencil, this.gripPencil], [this.pen, this.gripPen]]) { t.position.copy(gp.pos); t.rotation.copy(gp.rot); }
+    this.grips = { pencil: this.gripPencil, pen: this.gripPen };
 
     this.pose = 'walk';
     this.from = null; this.blend = 1; this.blendDur = 0.5;
     this.t = 0;
-    this.drift = 0;
     this.visible = true;
     // per-hand springs on the wrist target: a little overshoot when they move
     this.spring = { R: null, L: null };
@@ -514,34 +442,65 @@ export class Hands {
 
   setStain(k) { this.mats.flesh.uniforms.uStain.value = k; }
 
+  // a tool into the right hand (as it's gripped) or out of it, laid somewhere (parent, local transform)
+  take(name) {
+    const t = this.tools[name], gp = this.grips[name];
+    this.R.B.wrist.add(t);
+    t.position.copy(gp.pos); t.rotation.copy(gp.rot);
+  }
+  put(name, parent, pos, rot) {
+    const t = this.tools[name];
+    parent.add(t);
+    t.position.copy(pos); t.rotation.copy(rot);
+    t.visible = true;
+  }
+  inHand(name) { return this.tools[name].parent === this.R.B.wrist; }
+
   // resolve a hand's pose into a world wrist target and finger values
-  resolve(p, side, frames) {
+  resolve(p, side, frames, S = null, pole = null) {
     const F = frames[p.frame] || frames.body;
-    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(p.rot[0], p.rot[1], p.rot[2], 'YXZ'));
-    const wq = F.quat.clone().multiply(q);
+    let wq;
+    if (p.align && S) {
+      // a hand that hangs: it carries on from the forearm (a little curled toward the palm), its back
+      // turned the way `align` says
+      const T = new THREE.Vector3(...p.pos).applyQuaternion(F.quat).add(F.pos);
+      const E = elbowAt(S, T, pole);
+      const fd = T.clone().sub(E).normalize();
+      const back = new THREE.Vector3(...p.align).applyQuaternion(F.quat);
+      back.addScaledVector(fd, -back.dot(fd)).normalize();
+      wq = basisQuat(fd.addScaledVector(back, -0.2).normalize(), back);
+    } else if (p.rot) {
+      const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(p.rot[0], p.rot[1], p.rot[2], 'YXZ'));
+      wq = F.quat.clone().multiply(q);
+    } else wq = F.quat.clone();
     let pos;
-    if (p.tip && this.tip) {
+    if (p.grasp && F.tool) {
+      // the hand where it would be holding this tool, the tool lying as the frame says (on the desk, in
+      // the well, at the start of the line): the grip run backwards
+      const gp = this.grips[p.grasp];
+      wq = F.quat.clone().multiply(new THREE.Quaternion().setFromEuler(gp.rot).invert());
+      pos = F.pos.clone().sub(gp.pos.clone().applyQuaternion(wq));
+    } else if (p.tip && this.tip) {
       // the tool's working tip goes to the target; the wrist sits wherever that puts it
-      const tool = this.tools[p.hold];
-      const gp = p.hold === 'pen' ? this.gripPen : this.gripPencil;
-      const tipLocal = gp.pos.clone();   // the tool's tip is its origin
-      pos = this.tip.clone().sub(tipLocal.applyQuaternion(wq));
-      void tool;
+      const gp = this.grips[p.hold];
+      pos = this.tip.clone().sub(gp.pos.clone().applyQuaternion(wq));
     } else {
       pos = new THREE.Vector3(...p.pos).applyQuaternion(F.quat).add(F.pos);
+      // `at`: a point of the hand (wrist space) that goes to `pos`, rather than the wrist itself
+      if (p.at) pos.sub(new THREE.Vector3(...p.at).applyQuaternion(wq));
     }
-    return { pos, quat: wq, fingers: p.fingers, thumb: p.thumb, hold: p.hold, swing: p.swing || 0 };
+    // a hanging hand follows its arm; any other leads it (the elbow goes where suits the hand)
+    return { pos, quat: wq, fingers: p.fingers, thumb: p.thumb, hold: p.hold, swing: p.swing || 0, lead: p.align ? 0 : 1 };
   }
 
   // frames: { body: {pos, quat}, book: {...}, ... }; shoulders: { R: Vector3, L: Vector3 } world; pole dirs
-  update(dt, frames, { shoulders, poles, bob = 0, drift = 0 }) {
+  update(dt, frames, { shoulders, poles, bob = 0 }) {
     this.t += dt;
-    this.drift = drift;
     if (this.blend < 1) this.blend = Math.min(1, this.blend + dt / this.blendDur);
     const e = this.blend * this.blend * (3 - 2 * this.blend);
     const cur = {};
     for (const s of ['R', 'L']) {
-      const now = this.resolve(POSES[this.pose][s], s, frames);
+      const now = this.resolve(POSES[this.pose][s], s, frames, shoulders[s], poles[s]);
       let t = now;
       if (this.from && e < 1) {
         const a = this.from[s];
@@ -552,40 +511,56 @@ export class Hands {
           thumb: a.thumb.map((v, i) => lerp(v, now.thumb[i], e)),
           hold: e > 0.5 ? now.hold : a.hold,
           swing: lerp(a.swing, now.swing, e),
+          lead: lerp(a.lead ?? 1, now.lead, e),
         };
       }
       cur[s] = t;
     }
     this.snapshot = cur;
+    // the arms ride with the body: whatever it did since last frame (stepped, turned, stood up), the
+    // hands are carried along, and only their movement relative to it is eased
+    const body = frames.body;
+    // a cut (the camera carried somewhere else at once): the hands are simply where they belong
+    if (this.lastBody && (body.pos.distanceTo(this.lastBody.pos) > 0.5 || body.quat.angleTo(this.lastBody.quat) > 1.0)) {
+      this.lastBody = null; this.from = null; this.blend = 1;
+      this.spring = { R: null, L: null };
+      for (const a of [this.R, this.L]) { a.pp = null; a.roll = null; }
+      for (const s of ['R', 'L']) cur[s] = this.resolve(POSES[this.pose][s], s, frames, shoulders[s], poles[s]);
+    }
+    if (this.lastBody) {
+      const turn = body.quat.clone().multiply(this.lastBody.quat.clone().invert());
+      for (const s of ['R', 'L']) {
+        const sp = this.spring[s];
+        if (!sp) continue;
+        sp.pos.sub(this.lastBody.pos).applyQuaternion(turn).add(body.pos);
+        sp.vel.applyQuaternion(turn);
+        this[s].pp?.applyQuaternion(turn);
+      }
+    }
+    this.lastBody = { pos: body.pos.clone(), quat: body.quat.clone() };
 
     for (const s of ['R', 'L']) {
       const arm = this[s], t = cur[s];
-      // life: breathing, a pace's swing, the overshoot of a spring, and a tremor that grows with drift
+      // the hands move like a careful old man's: steady, no tremor, no bounce. Each wrist follows its
+      // target critically damped (it arrives without overshooting); the writing hand follows closely
+      // enough that the point stays on the line being drawn. Walking, the arms swing with the pace.
       const tgt = t.pos.clone();
-      tgt.y += Math.sin(this.t * 1.25 + (s === 'R' ? 0 : 0.4)) * 0.0018;
       if (t.swing) tgt.addScaledVector(frames.body.fwd, Math.sin(bob * Math.PI) * 0.05 * t.swing);
-      const tr = 0.0004 + drift * 0.012;
-      tgt.x += (Math.sin(this.t * 23.1 + (s === 'R' ? 0 : 2)) + Math.sin(this.t * 37.7)) * tr * 0.5;
-      tgt.z += (Math.sin(this.t * 29.3 + 1.1) + Math.sin(this.t * 17.9 + (s === 'R' ? 3 : 0))) * tr * 0.5;
       let sp = this.spring[s];
       if (!sp || sp.pos.distanceTo(tgt) > 0.6) sp = this.spring[s] = { pos: tgt.clone(), vel: new THREE.Vector3() };
-      // the writing hand follows the tip exactly (no spring), everything else eases with a little overshoot
-      if (POSES[this.pose][s].tip && e >= 1) { sp.pos.copy(tgt); sp.vel.set(0, 0, 0); }
-      else {
-        const k = 160, c = 2 * Math.sqrt(k) * 0.62;
-        const acc = tgt.clone().sub(sp.pos).multiplyScalar(k).addScaledVector(sp.vel, -c);
-        sp.vel.addScaledVector(acc, Math.min(dt, 0.033));
-        sp.pos.addScaledVector(sp.vel, Math.min(dt, 0.033));
-      }
-      this.solve(arm, shoulders[s], sp.pos, t.quat, poles[s]);
-      this.fingers(arm, t, s);
-      for (const [name, obj] of Object.entries(arm.held)) obj.visible = t.hold === name && this.visible;
+      follow(sp, tgt, POSES[this.pose][s].tip ? 34 : 11, dt);
+      this.solve(arm, shoulders[s], sp.pos, t.quat, poles[s], dt, t.lead ?? 1);
+      this.fingers(arm, t);
+      for (const [name, obj] of Object.entries(arm.held)) if (obj.parent === arm.B.wrist) obj.visible = t.hold === name && this.visible;
     }
     this.R.root.visible = this.L.root.visible = this.visible;
   }
 
-  // two-bone IK: shoulder S, wrist target T, elbow toward the pole; the roll shared out down the forearm
-  solve(arm, S, T, wq, pole) {
+  // Two-bone IK: shoulder S, wrist target T. Of all the places the elbow could go, it goes where the
+  // forearm meets the hand the way a wrist likes (cocked back a little, in line with the hand), leaning
+  // toward the body's own pole only to break ties; then whatever bend the wrist is still asked for is
+  // held inside what a wrist can do. The forearm's roll is shared out down its length.
+  solve(arm, S, T, wq, pole, dt = 1 / 60, lead = 1) {
     const B = arm.B;
     const ST = T.clone().sub(S);
     let d = ST.length();
@@ -596,42 +571,70 @@ export class Hands {
     const dir = T.clone().sub(S).normalize();
     const a = (UPPER * UPPER - FORE * FORE + d * d) / (2 * d);
     const h = Math.sqrt(Math.max(0, UPPER * UPPER - a * a));
-    const pp = pole.clone().addScaledVector(dir, -pole.dot(dir)).normalize();
+    // where the elbow would be if the forearm left the wrist straight back from the hand
+    const want = new THREE.Vector3(0, 0.32, 1).normalize().applyQuaternion(wq).multiplyScalar(FORE).add(T).sub(S);
+    const wp = want.addScaledVector(dir, -want.dot(dir));
+    const bp = pole.clone().addScaledVector(dir, -pole.dot(dir)).normalize();
+    // (how far off the line the natural elbow is decides how much it counts: an arm near its full
+    // reach has no preference, and leaves it to the body's own)
+    const pp = wp.multiplyScalar(lead / FORE).addScaledVector(bp, 0.45);
+    if (pp.lengthSq() < 1e-8) pp.copy(bp);
+    // never with the elbow up above the shoulder's line or swung in across the chest
+    pp.normalize();
+    if (pp.dot(bp) < -0.2) pp.addScaledVector(bp, -0.2 - pp.dot(bp)).normalize();
+    // the elbow swings round to where it's going at an old man's pace, never jumping across
+    if (arm.pp) {
+      const prev = arm.pp.clone().addScaledVector(dir, -arm.pp.dot(dir));
+      if (prev.lengthSq() > 1e-8) {
+        prev.normalize();
+        const ang = Math.atan2(prev.clone().cross(pp).dot(dir), prev.dot(pp));
+        const step = Math.max(-dt * 5, Math.min(dt * 5, ang));
+        pp.copy(prev.applyAxisAngle(dir, step));
+      }
+    }
+    arm.pp = pp.clone();
     const E = S.clone().addScaledVector(dir, a).addScaledVector(pp, h);
     const fd = T.clone().sub(E).normalize();
 
-    // the hand's back, and the forearm's natural back (away from the elbow's pole)
-    const hd = new THREE.Vector3(0, 1, 0).applyQuaternion(wq);
-    const hdp = hd.clone().addScaledVector(fd, -hd.dot(fd));
-    const n0 = pp.clone().negate().addScaledVector(fd, -(-pp.dot(fd)));
-    if (n0.lengthSq() < 1e-6) n0.set(0, 1, 0);
+    // the forearm at its neutral turn (thumb up) has the back of the hand along the elbow's hinge,
+    // facing out; the hand's turn from there (pronation one way, supination the other, each about a
+    // right angle) is one angle, carried on from last frame's (no wrapping round from +180° to −180°),
+    // kept within what a forearm can turn, and shared out down its length
+    const n0 = pp.clone().cross(fd).multiplyScalar(arm.side);
+    if (n0.lengthSq() < 1e-6) n0.set(arm.side, 0, 0);
     n0.normalize();
-    let up = n0.clone();
-    if (hdp.lengthSq() > 1e-6) { hdp.normalize(); up = n0.clone().add(hdp); if (up.lengthSq() < 1e-4) up = n0.clone(); up.normalize(); }
+    const hd = _w.set(0, 1, 0).applyQuaternion(wq);
+    const hdp = hd.addScaledVector(fd, -hd.dot(fd));
+    let roll = arm.roll ?? 0;
+    if (hdp.lengthSq() > 1e-6) {
+      hdp.normalize();
+      const r = Math.atan2(n0.clone().cross(hdp).dot(fd) * -1, n0.dot(hdp));
+      roll = arm.roll == null ? r : arm.roll + Math.max(-dt * 7, Math.min(dt * 7, Math.atan2(Math.sin(r - arm.roll), Math.cos(r - arm.roll))));
+    }
+    roll = Math.max(-1.75, Math.min(1.75, roll));
+    arm.roll = roll;
 
     // upper arm: -Z along S→E, its back roughly up
     const ud = E.clone().sub(S).normalize();
     const shoulderQ = basisQuat(ud, n0);
     B.shoulder.position.copy(S);
     B.shoulder.quaternion.copy(shoulderQ);
-    const elbowQ = basisQuat(fd, up);
+    const elbowQ = basisQuat(fd, n0).multiply(_t.setFromAxisAngle(_Z, roll * 0.4));
     B.elbow.quaternion.copy(shoulderQ.clone().invert().multiply(elbowQ));
-    // half the remaining roll in the twist bone, the rest at the wrist
-    let roll = 0;
-    if (hdp.lengthSq() > 1e-6) roll = Math.atan2(up.clone().cross(hdp).dot(fd.clone().negate()), up.dot(hdp));
-    const twistL = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), roll * 0.5);
+    const twistL = new THREE.Quaternion().setFromAxisAngle(_Z, roll * 0.35);
     B.twist.quaternion.copy(twistL);
     const twistW = elbowQ.clone().multiply(twistL);
-    B.wrist.quaternion.copy(twistW.invert().multiply(wq));
+    const rel = twistW.invert().multiply(wq);
+    B.wrist.quaternion.copy(clampWrist(rel, arm.side));
+    arm.report = { roll, rel, elbow: E };
+    return rel;
   }
 
-  fingers(arm, t, s) {
+  fingers(arm, t) {
     const B = arm.B, side = arm.side;
-    const tr = (this.drift * 0.08 + 0.004);
     for (const f of FNAMES) {
-      const v = t.fingers[f];
-      const jit = Math.sin(this.t * (19 + f.length * 3) + (s === 'R' ? 0 : 1)) * tr;
-      B[f + '1'].rotation.set(-(v[1] + jit), v[0] * FINGERS[f].out * side, 0);
+      const v = t.fingers[f], F = FINGERS[f];
+      B[f + '1'].rotation.set(-v[1], (F.nat + v[0] * F.out) * side, 0);
       B[f + '2'].rotation.set(-v[2], 0, 0);
       B[f + '3'].rotation.set(-v[3], 0, 0);
     }
@@ -651,10 +654,59 @@ export class Hands {
   }
 }
 
+// A wrist bends back about 55°, forward about 65°, and side to side about 20° toward the thumb and
+// 30° toward the little finger; its own twist is the forearm's business. Anything past that is pulled
+// back inside (q: the hand relative to the end of the forearm).
+const _w = new THREE.Vector3(), _Z = new THREE.Vector3(0, 0, 1), _t = new THREE.Quaternion();
+const WRIST = { ext: 55 * Math.PI / 180, flex: 65 * Math.PI / 180, radial: 20 * Math.PI / 180, ulnar: 30 * Math.PI / 180 };
+function clampWrist(q, side) {
+  // q = swing · twist, the twist about the forearm's axis (local Z). The wrist itself hardly twists:
+  // what the forearm hasn't turned is mostly left undone.
+  const twist = new THREE.Quaternion(0, 0, q.z, q.w).normalize();
+  if (twist.w < 0) twist.set(0, 0, -twist.z, -twist.w);
+  const tw = 2 * Math.atan2(twist.z, twist.w), TW = 0.7;
+  const swing = q.clone().multiply(twist.clone().invert());
+  if (Math.abs(tw) > TW) twist.setFromAxisAngle(_Z, Math.sign(tw) * TW);
+  // the swing's bend, measured as (back, toward the thumb), held inside an elliptical cone of the
+  // wrist's limits: continuous, so a reach past them slides along the edge instead of flipping
+  if (swing.w < 0) swing.set(-swing.x, -swing.y, -swing.z, -swing.w);
+  const sn = Math.sqrt(swing.x * swing.x + swing.y * swing.y);
+  if (sn > 1e-6) {
+    const ang = 2 * Math.atan2(sn, swing.w);
+    const e = ang * swing.x / sn, r = ang * swing.y / sn * side;
+    const k = Math.hypot(e / (e >= 0 ? WRIST.ext : WRIST.flex), r / (r >= 0 ? WRIST.radial : WRIST.ulnar));
+    if (k > 1) {
+      const e2 = e / k, r2 = r / k, a2 = Math.hypot(e2, r2);
+      swing.setFromAxisAngle(_w.set(e2 / a2, r2 * side / a2, 0), a2);
+    }
+  }
+  return swing.multiply(twist);
+}
+
+// critically damped follow at angular frequency w (exact for a target held still over dt)
+const _d = new THREE.Vector3(), _v = new THREE.Vector3();
+function follow(sp, target, w, dt) {
+  const x0 = _d.copy(sp.pos).sub(target);
+  const ex = Math.exp(-w * dt);
+  const j = _v.copy(sp.vel).addScaledVector(x0, w);          // v0 + w·x0
+  sp.vel.addScaledVector(j, -w * dt).multiplyScalar(ex);       // (v0 − w·j·t)·e^(−wt)
+  sp.pos.copy(target).add(x0.addScaledVector(j, dt).multiplyScalar(ex));
+}
+
 function mixFingers(a, b, e) {
   const o = {};
   for (const f of FNAMES) o[f] = a[f].map((v, i) => lerp(v, b[f][i], e));
   return o;
+}
+
+// the elbow for a shoulder S and wrist T, bent toward the pole
+function elbowAt(S, T, pole) {
+  const ST = T.clone().sub(S);
+  const d = Math.min(Math.max(ST.length(), Math.abs(UPPER - FORE) + 0.01), UPPER + FORE - 0.002);
+  const dir = ST.normalize();
+  const a = (UPPER * UPPER - FORE * FORE + d * d) / (2 * d), h = Math.sqrt(Math.max(0, UPPER * UPPER - a * a));
+  const pp = pole.clone().addScaledVector(dir, -pole.dot(dir)).normalize();
+  return S.clone().addScaledVector(dir, a).addScaledVector(pp, h);
 }
 
 // quaternion whose -Z points along `fwd` and whose +Y is as near `up` as it can be

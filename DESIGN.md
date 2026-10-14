@@ -43,7 +43,9 @@ src/world/geo.js           chart ↔ world (4 m to a chart unit), the tower, the
 src/world/keeper.js        the first-person game: phases, camera, states, prompts, HUD, autoplay
 src/world/room.js          the watch room, its door, stairs and sill, and the tower top seen from outside
 src/world/book.js          the logbook on the table: LogbookScene's layers as page textures, raycast input
-src/world/hands.js         the forearms and hands: skinned lofts, poses, two-bone IK, tremor
+src/world/hands.js         the forearms and hands: poses, two-bone IK with a wrist's limits, the grips
+src/world/handmesh.js      the old hands' skin as one distance field, meshed (in a worker) and weighted
+src/world/inkwell.js       the inkwell and the goose quill the plan is inked with
 src/world/walker.js        walking: keys and mouse look, touch stick, the pace, autoplay steering
 src/world/bay.js           the bay from the chart: land, sea, reefs, village, piers, ships, beam, beats
 src/world/night.js         the night from the chair: Fleet, the time-lapse and its slowdowns
@@ -51,11 +53,17 @@ src/world/lane.js          the lane round the bay, its spurs, and routes along i
 src/world/headland.js      by day: walking out of doors, the places, triggers, the afternoon clock
 src/world/places/*.js      one placeholder per place (shed, cliff, village, harbour, cottages, school)
 src/world/review.js        debug: contact sheets of the hand poses
+src/world/colliders.js     what the hands can touch, as solid shapes built from the drawn pieces
+src/world/anatomy.js       each joint's range of motion (AAOS), and every joint angle read off the arm
+src/world/contacts.js      what each pose's hands should touch, and every tolerance (THRESH)
+src/world/handcheck.js     debug: the hands measured against the room (tools/check-hands.mjs drives it)
 src/vendor/three/          three.js (pinned) and the one addon used, loaded through the import map
 tools/check-nights.mjs     node script: validates every night is solvable, autoplan works
+tools/check-hands.mjs      node script: the hands' tests in headless Chromium (penetration, contact, joints...)
 tools/serve.py             no-cache static server for development
 docs/screenshots/          one screenshot of every distinct scene
 docs/HANDOFF.md            where the first-person build stands and how it fits together
+docs/hands-check/          the hands' measured numbers (baseline.json and later runs), the sheets' cameras
 ```
 
 ## Rendering architecture
@@ -131,8 +139,9 @@ take over through a bloom.
 
 ## Decisions made for first person
 
-* **Hands only.** No body, no shadow; two skinned forearms with eleven authored poses, two-bone IK,
-  and a tremor that grows with the handwriting's drift (REPORT, milestone 3).
+* **Hands only.** No body, no shadow; two skinned forearms with authored poses and two-bone IK held
+  inside a wrist's real range (REPORT, milestones 3 and 7). An old man's hands: one continuous skin,
+  bony knuckles, veins and wrinkles. They never shake, and they never lie over the pages.
 * **The bay is built from the chart** at 4 m to a unit, so the line in the book is the line from the
   window.
 * **The window faces the middle of the bay** (chart 50, 30), so the reefs fall inside it.

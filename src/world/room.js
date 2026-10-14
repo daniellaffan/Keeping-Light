@@ -92,21 +92,21 @@ export function buildRoom() {
   // window reveal, sill, frame and glazing bars
   reveal(b, M.stone, w.deg, w.half, w.sill, w.top);
   const [sx, sz] = polar(w.deg, R + 0.12);
-  b.box(M.pine, w.half * 2 + 0.24, 0.05, 0.62, [sx, w.sill + 0.025, sz], { rot: [0, facing(w.deg), 0], uvScale: 1 });
+  b.box(M.pine, w.half * 2 + 0.24, 0.05, 0.62, [sx, w.sill + 0.025, sz], { rot: [0, facing(w.deg), 0], uvScale: 1, tag: 'sill' });
   const [fx, fz] = polar(w.deg, R + 0.42);
   const frameRot = [0, facing(w.deg), 0];
   const fh = w.top - w.sill, fy = w.sill + fh / 2;
-  for (const s of [-1, 1]) b.add(new THREE.BoxGeometry(0.07, fh, 0.08), M.pine, { pos: offset(fx, fz, w.deg, s * (w.half - 0.035), fy), rot: frameRot });
-  b.add(new THREE.BoxGeometry(w.half * 2, 0.07, 0.08), M.pine, { pos: [fx, w.top - 0.035, fz], rot: frameRot });
-  b.add(new THREE.BoxGeometry(w.half * 2, 0.08, 0.1), M.pine, { pos: [fx, w.sill + 0.04, fz], rot: frameRot });
-  b.add(new THREE.BoxGeometry(0.035, fh, 0.04), M.pine, { pos: [fx, fy, fz], rot: frameRot });
+  for (const s of [-1, 1]) b.add(new THREE.BoxGeometry(0.07, fh, 0.08), M.pine, { pos: offset(fx, fz, w.deg, s * (w.half - 0.035), fy), rot: frameRot, tag: 'window' });
+  b.add(new THREE.BoxGeometry(w.half * 2, 0.07, 0.08), M.pine, { pos: [fx, w.top - 0.035, fz], rot: frameRot, tag: 'window' });
+  b.add(new THREE.BoxGeometry(w.half * 2, 0.08, 0.1), M.pine, { pos: [fx, w.sill + 0.04, fz], rot: frameRot, tag: 'window' });
+  b.add(new THREE.BoxGeometry(0.035, fh, 0.04), M.pine, { pos: [fx, fy, fz], rot: frameRot, tag: 'window' });
   // one transom, above the eye of someone sitting, so the horizon runs clear across the panes
-  for (const k of [0.6]) b.add(new THREE.BoxGeometry(w.half * 2, 0.03, 0.04), M.pine, { pos: [fx, w.sill + fh * k, fz], rot: frameRot });
+  for (const k of [0.6]) b.add(new THREE.BoxGeometry(w.half * 2, 0.03, 0.04), M.pine, { pos: [fx, w.sill + fh * k, fz], rot: frameRot, tag: 'window' });
 
   // door reveal, a stone step down to the headland, and the door itself on its hinge (it swings in)
   reveal(b, M.stone, d.deg, d.half, 0, d.top);
   const [stx, stz] = polar(d.deg, R + ROOM.wall + 0.3);
-  b.box(M.stone, d.half * 2 + 0.3, 0.16, 0.6, [stx, -0.08, stz], { rot: [0, facing(d.deg), 0] });
+  b.box(M.stone, d.half * 2 + 0.3, 0.16, 0.6, [stx, -0.08, stz], { rot: [0, facing(d.deg), 0], tag: 'step' });
   const [dx, dz] = polar(d.deg, R + 0.36);
   const door = new THREE.Group();
   door.name = 'door';
@@ -120,7 +120,7 @@ export function buildRoom() {
     db.add(new THREE.BoxGeometry((d.half * 2) / 5 + 0.004, d.top - 0.02, 0.05), M.oak, { pos: [off, (d.top - 0.02) / 2, 0] });
   }
   for (const y of [0.35, 1.7]) db.add(new THREE.BoxGeometry(d.half * 2 - 0.08, 0.06, 0.03), M.iron, { pos: [d.half, y, 0.03] });
-  db.add(new THREE.TorusGeometry(0.06, 0.012, 6, 16), M.iron, { pos: [d.half * 2 - 0.2, 1.0, 0.04] });
+  db.add(new THREE.TorusGeometry(0.06, 0.012, 6, 16), M.iron, { pos: [d.half * 2 - 0.2, 1.0, 0.04], tag: 'ring' });
   swing.add(db.finish('door'));
   const ringAt = new THREE.Object3D();
   ringAt.position.set(d.half * 2 - 0.2, 1.0, 0.04);
@@ -137,17 +137,17 @@ export function buildRoom() {
     const y = (i + 1) * st.rise;
     const rm = (st.r0 + R) / 2;
     const [tx, tz] = polar(a, rm);
-    b.add(new THREE.BoxGeometry(0.34, 0.06, R - st.r0 + 0.05), M.oak, { pos: [tx, y, tz], rot: [0, facing(a), 0], wonk: 1.4 });
+    b.add(new THREE.BoxGeometry(0.34, 0.06, R - st.r0 + 0.05), M.oak, { pos: [tx, y, tz], rot: [0, facing(a), 0], wonk: 1.4, tag: 'stairs' });
     // riser below each tread, set back
     const [rx, rz] = polar(a - st.step * 0.42, rm);
-    b.add(new THREE.BoxGeometry(0.03, st.rise - 0.06, R - st.r0), M.oak, { pos: [rx, y - st.rise / 2, rz], rot: [0, facing(a - st.step * 0.42) + Math.PI / 2, 0], scale: [1, 1, 1] });
+    b.add(new THREE.BoxGeometry(0.03, st.rise - 0.06, R - st.r0), M.oak, { pos: [rx, y - st.rise / 2, rz], rot: [0, facing(a - st.step * 0.42) + Math.PI / 2, 0], scale: [1, 1, 1], tag: 'stairs' });
     // baluster at the inner end
     const [bx, bz] = polar(a, st.r0 + 0.05);
-    b.cyl(M.iron, 0.012, 0.012, 0.9, [bx, y + 0.45, bz], { seg: 6 });
+    b.cyl(M.iron, 0.012, 0.012, 0.9, [bx, y + 0.45, bz], { seg: 6, tag: 'rail' });
     stairRail.push(new THREE.Vector3(bx, y + 0.9, bz));
   }
   const rail = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(stairRail), 64, 0.022, 6, false);
-  b.add(rail, M.iron, { wonk: 0 });
+  b.add(rail, M.iron, { wonk: 0, tag: 'rail' });
 
   // ---- the table, under the top of the stairs ----
   const T = ROOM.table;
@@ -162,13 +162,11 @@ export function buildRoom() {
   // a drawer front
   tb.box(M.pine, 0.42, 0.07, 0.02, [0.25, T.h - 0.1, T.d / 2 - 0.065]);
   tb.cyl(M.brass, 0.012, 0.012, 0.02, [0.25, T.h - 0.1, T.d / 2 - 0.05], { rot: [Math.PI / 2, 0, 0], seg: 8 });
-  // inkwell and a pen tray
-  tb.cyl(M.glass, 0.026, 0.034, 0.05, [0.47, T.h + 0.025, -0.06], { seg: 14 });
-  tb.cyl(M.iron, 0.013, 0.013, 0.012, [0.47, T.h + 0.056, -0.06], { seg: 10 });
-  tb.box(M.pine, 0.24, 0.012, 0.07, [0.46, T.h + 0.006, 0.08], { rot: [0, 0.12, 0] });
+  // a pen tray (the inkwell and quill on the table are the keeper's, so they can be picked up)
+  tb.box(M.pine, 0.24, 0.012, 0.07, [0.46, T.h + 0.006, 0.08], { rot: [0, 0.12, 0], tag: 'tray' });
   // a tin box of spare wicks, the tide almanac
-  tb.box(M.iron, 0.12, 0.06, 0.09, [-0.52, T.h + 0.03, 0.2], { rot: [0, 0.3, 0] });
-  tb.box(wash({ color: '#7E3B33', color2: '#6A3029', line: 1, gran: 0.7 }), 0.16, 0.025, 0.23, [0.42, T.h + 0.0125, -0.24], { rot: [0, -0.2, 0] });
+  tb.box(M.iron, 0.12, 0.06, 0.09, [-0.52, T.h + 0.03, 0.2], { rot: [0, 0.3, 0], tag: 'tin' });
+  tb.box(wash({ color: '#7E3B33', color2: '#6A3029', line: 1, gran: 0.7 }), 0.16, 0.025, 0.23, [0.5, T.h + 0.0125, -0.27], { rot: [0, -0.2, 0], tag: 'almanac' });
   table.add(tb.finish('table'));
   table.position.set(tx, 0, tz);
   table.rotation.y = tRot;
@@ -213,10 +211,10 @@ export function buildRoom() {
   // ---- the lamp control: a pipe up the wall, a brass lever and a pressure gauge ----
   const C = ROOM.control;
   const [cx, cz] = polar(C.deg, R - 0.06);
-  sb.cyl(M.brass, 0.022, 0.022, H, [cx, H / 2, cz], { seg: 10 });
-  sb.cyl(M.brass, 0.045, 0.045, 0.1, [cx, C.h, cz], { seg: 14 });
+  sb.cyl(M.brass, 0.022, 0.022, H, [cx, H / 2, cz], { seg: 10, tag: 'lamp control' });
+  sb.cyl(M.brass, 0.045, 0.045, 0.1, [cx, C.h, cz], { seg: 14, tag: 'lamp control' });
   const [gx, gz] = polar(C.deg + 3.2, R - 0.05);
-  sb.cyl(M.brass, 0.06, 0.06, 0.03, [gx, C.h + 0.32, gz], { rot: [Math.PI / 2, facing(C.deg), 0], seg: 20 });
+  sb.cyl(M.brass, 0.06, 0.06, 0.03, [gx, C.h + 0.32, gz], { rot: [Math.PI / 2, facing(C.deg), 0], seg: 20, tag: 'lamp control' });
   const control = new THREE.Group();
   const leverB = new Builder(19);
   leverB.box(M.brass, 0.03, 0.03, 0.22, [0, 0, -0.11]);

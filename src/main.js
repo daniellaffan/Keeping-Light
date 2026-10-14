@@ -310,6 +310,8 @@ document.addEventListener('visibilitychange', () => {
 
 // ---------------- boot ----------------
 async function boot() {
+  // the keeper's hands take a moment to build: start them now, alongside the fonts
+  const skin = FP ? import('./world/hands.js').then((m) => m.prepareSkin()).catch(() => {}) : null;
   const fonts = ['500 30px Caveat', '20px "Homemade Apple"', '24px "La Belle Aurore"', '24px "Cedarville Cursive"', '30px "Mrs Saint Delafield"', '30px "Cormorant Garamond"', 'italic 30px "Cormorant Garamond"'];
   try {
     await Promise.race([
@@ -327,9 +329,11 @@ async function boot() {
       game.scenes.testroom = new TestRoomScene(game);
       // the keeper's first-person phases take over their scene names
       const { Keeper } = await import('./world/keeper.js');
+      await skin;
       game.keeper = new Keeper(game);
       Object.assign(game.scenes, game.keeper.wrappers);
       if (DEBUG) (await import('./world/review.js')).installReview(game);
+      if (DEBUG) (await import('./world/handcheck.js')).installHandCheck(game);
     } catch (err) {
       // if the 3D world can't be built here, the 2D game is still whole: play that instead
       console.error('first person unavailable, playing the 2D game', err);
