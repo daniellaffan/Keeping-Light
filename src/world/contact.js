@@ -462,7 +462,7 @@ export class ContactSolver {
     arm.root.updateWorldMatrix(true, true);
     const w = arm.B.wrist.getWorldPosition(_w);
     ob.gather(w.x, w.y, w.z, 0.2, null, ctx.skip);
-    st.moved = 0; st.its = 0; st.log = null;
+    st.moved = 0; st.its = 0;
     const roleOf = (f) => (spec.fingers && (spec.fingers[f] ?? spec.fingers.all)) || 'free';
     // a thumb that is to touch starts as little curled as it can be: the ball of the thumb follows it
     // down, and the hand isn't to be laid on that
@@ -486,7 +486,6 @@ export class ContactSolver {
           P.body.update(M);
           const B = P.body.pos;
           const worst = MARGIN - ob.minGap(B, P.body.count, CUT), wi = ob.at;
-          if (this.debug) (st.log ||= []).push(['push', +(worst * 1000).toFixed(2)]);
           if (worst <= 1e-6) return;
           ob.sd(B[wi * 3], B[wi * 3 + 1], B[wi * 3 + 2]);
           move(ob.n.x * worst, ob.n.y * worst, ob.n.z * worst);
@@ -536,7 +535,6 @@ export class ContactSolver {
         for (let pass = 0; pass < 2; pass++) {
           const h = heel();
           if (!h) break;
-          if (this.debug) (st.log ||= []).push(['heel', +(h.g * 1000).toFixed(2), h.n.toArray().map((v) => +v.toFixed(2))]);
           if (Math.abs(h.g - MARGIN) > 0.0002) {
             let d = W * Math.max(-0.03, Math.min(0.03, h.g - MARGIN));
             if (l0 != null && ctx.dt > 0) d = Math.max(l0 - r - laid, Math.min(l0 + r - laid, d));
@@ -553,7 +551,6 @@ export class ContactSolver {
             const n = _n.copy(ob.n), lever = _u.set(B[i * 3], B[i * 3 + 1], B[i * 3 + 2]).sub(h.p);
             lever.addScaledVector(n, -lever.dot(n));
             const L = lever.length();
-            if (this.debug) (st.log ||= []).push(['turn', +(worst * 1000).toFixed(2), +(L * 1000).toFixed(1), ob.hit?.name]);
             // (in right by the heel itself: simply out)
             if (L < 0.015) { move(n.x * worst, n.y * worst, n.z * worst); continue; }
             turn(_f.crossVectors(lever, n).normalize(), W * Math.min(0.4, Math.atan2(worst, L)), h.p);
@@ -646,7 +643,6 @@ export class ContactSolver {
         // over the next frames, never all at once)
         if (bodyIn() > MARGIN) out = lifted(Math.max(0, L - LAY_RATE * ctx.dt));
       }
-      if (this.debug) (st.log ||= []).push(['lift', +(L * 1000).toFixed(2), +(ctx.T.distanceTo(T0) * 1000).toFixed(2)]);
     }
     out ||= fingers();
     // (again, up to STUCK times: by an edge, the way out of the deepest point may not be the way out of
@@ -662,7 +658,6 @@ export class ContactSolver {
       // (no face of it on the wrist's side: its nearest way out)
       if (!Number.isFinite(fob.out)) fob.sd(pts.pos[i * 3], pts.pos[i * 3 + 1], pts.pos[i * 3 + 2], false, true, Infinity);
       const d = MARGIN - Math.min(stuck.g, fob.out);
-      if (this.debug) (st.log ||= []).push(['stuck', stuck.f, +(d * 1000).toFixed(2), fob.hit?.name, fob.n.toArray().map((v) => +v.toFixed(2))]);
       const T = _T.copy(ctx.T).addScaledVector(fob.n, d);
       st.moved += d; st.its++;
       ctx.resolve(T, ctx.wq);
