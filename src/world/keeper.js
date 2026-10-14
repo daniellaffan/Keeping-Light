@@ -462,7 +462,7 @@ export class Keeper {
     if (this.state === 'lean') {
       if (k === 'Escape' || k === 'q' || k === 'Q') { this.standUp(); return true; }
       // the logbook's own keys: arrows turn pages, ctrl-z takes back
-      if (['ArrowLeft', 'ArrowRight'].includes(k) || ((k === 'z' || k === 'Z') && (e.metaKey || e.ctrlKey))) { this.book.input.keyDown(e); this.book.input.keys.delete(k); return true; }
+      if (['ArrowLeft', 'ArrowRight'].includes(k) || ((k === 'z' || k === 'Z') && (e.metaKey || e.ctrlKey))) { this.book.input.keyDown(e); this.book.input.keys.delete(k.length === 1 ? k.toLowerCase() : k); return true; }
     }
     return false;
   }

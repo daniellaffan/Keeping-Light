@@ -1,6 +1,10 @@
 // Pointer (mouse + touch via Pointer Events) and keyboard, plus immediate-mode hit regions.
 // Scenes register buttons while drawing; clicks are matched against last frame's buttons.
 
+// Held keys are stored under one name per physical key: 'W' (Shift held) and 'w' are the same key,
+// otherwise pressing W, then Shift, then releasing W leaves 'w' stuck in the set.
+export const keyName = (k) => (k.length === 1 ? k.toLowerCase() : k);
+
 export class Input {
   constructor(canvas, layers) {
     this.canvas = canvas;
@@ -35,7 +39,15 @@ export class Input {
     canvas.addEventListener('pointerleave', () => { if (!this.down) { this.x = -9999; this.y = -9999; } });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     window.addEventListener('keydown', (e) => this.keyDown(e));
-    window.addEventListener('keyup', (e) => this.keys.delete(e.key));
+    window.addEventListener('keyup', (e) => {
+      if (e.key === 'Meta') this.keys.clear();   // macOS sends no keyup for keys released while Cmd is down
+      else this.keys.delete(keyName(e.key));
+    });
+    // focus lost (alt-tab, devtools, tab switch, pointer lock released): keyups will never arrive
+    const release = () => this.keys.clear();
+    window.addEventListener('blur', release);
+    document.addEventListener('visibilitychange', () => { if (document.hidden) release(); });
+    document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement) release(); });
   }
 
   // ---- events, in logical coordinates (called by the DOM listeners, or by hand for a virtual input) ----
@@ -65,8 +77,8 @@ export class Input {
   pointerCancel(e) { this.down = false; this.captured = null; for (const h of this.handlers.up) h(this.x, this.y, e); }
   keyDown(e) {
     this.lastActivity = performance.now();
-    if (e.repeat && !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'w', 'a', 's', 'd', 'W', 'A', 'S', 'D'].includes(e.key)) return;
-    this.keys.add(e.key);
+    if (e.repeat && !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'w', 'a', 's', 'd'].includes(keyName(e.key))) return;
+    if (!(e.metaKey && e.key.length === 1)) this.keys.add(keyName(e.key));   // Cmd+letter is a shortcut, not a held key
     for (const h of this.handlers.key) if (h(e) === true) { e.preventDefault(); break; }
   }
 
