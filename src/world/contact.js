@@ -97,6 +97,24 @@ export function sample(arm, set, spacing) {
   return Int32Array.from(out);
 }
 
+// the same points put in an order that keeps near ones together (split in two across their longest
+// side, again and again), so each run of CHUNK in it is a small patch of skin (Obstacles.minGap)
+function compact(arm, idx) {
+  const g = arm.mesh.geometry, sg = arm.sleeve.geometry, n = g.attributes.position.count;
+  const at = (v) => { const A = v < n ? g.attributes.position.array : sg.attributes.position.array, o = (v < n ? v : v - n) * 3; return [A[o], A[o + 1], A[o + 2]]; };
+  const split = (list) => {
+    if (list.length <= CHUNK) return list;
+    const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (const [, p] of list) for (let a = 0; a < 3; a++) { lo[a] = Math.min(lo[a], p[a]); hi[a] = Math.max(hi[a], p[a]); }
+    const ax = [0, 1, 2].reduce((b, a) => (hi[a] - lo[a] > hi[b] - lo[b] ? a : b), 0);
+    list.sort((u, w) => u[1][ax] - w[1][ax] || u[0] - w[0]);
+    // (cut at a whole number of runs, so no run straddles the cut)
+    const m = Math.max(CHUNK, Math.round(list.length / 2 / CHUNK) * CHUNK);
+    return [...split(list.slice(0, m)), ...split(list.slice(m))];
+  };
+  return Int32Array.from(split([...idx].map((v) => [v, at(v)])).map(([v]) => v));
+}
+
 // ---------------------------------------------------------------------------------------------------
 // Points of the skin (vertex indices), skinned with given bone matrices (bone world × bind inverse).
 export class SkinPoints {
@@ -143,6 +161,15 @@ export function boneMatrices(arm, M, only = null) {
 }
 export const boneArray = () => new Float64Array(MAXB * 16);
 
+// how far a collider's space can stretch a distance in the world: 1 for one only moved and turned,
+// else a bound (its 3×3 part's size); and how many points go in a run (Obstacles.minGap)
+function stretch(iv) {
+  const c = (i) => Math.hypot(iv[i], iv[i + 1], iv[i + 2]), d = (i, j) => iv[i] * iv[j] + iv[i + 1] * iv[j + 1] + iv[i + 2] * iv[j + 2];
+  const rigid = [0, 4, 8].every((i) => Math.abs(c(i) - 1) < 1e-9) && Math.abs(d(0, 4)) < 1e-9 && Math.abs(d(0, 8)) < 1e-9 && Math.abs(d(4, 8)) < 1e-9;
+  return rigid ? 1 : Math.hypot(c(0), c(4), c(8));
+}
+const CHUNK = 16;
+
 // ---------------------------------------------------------------------------------------------------
 // The world near a hand: the colliders' parts within reach (of a ball, or of a segment and a margin
 // round it), and signed distances to them. Each part's bound is kept in world space, so a point far
@@ -174,7 +201,7 @@ export class Obstacles {
       if (skip && skip.includes(c.name)) continue;
       if (!c.active() || (!c.parts.length && !c.fields.length)) continue;
       if (dist(c.wc.x, c.wc.y, c.wc.z) > c.wr + r) continue;
-      const e = c.m.elements, L = { c, iv: c.inv.elements, m: e, k: cols.length };
+      const e = c.m.elements, iv = c.inv.elements, L = { c, iv, m: e, k: cols.length, s: stretch(iv) };
       let used = false;
       for (const p of c.parts) {
         const x = e[0] * p.c[0] + e[4] * p.c[1] + e[8] * p.c[2] + e[12], y = e[1] * p.c[0] + e[5] * p.c[1] + e[9] * p.c[2] + e[13], z = e[2] * p.c[0] + e[6] * p.c[1] + e[10] * p.c[2] + e[14];
@@ -192,7 +219,10 @@ export class Obstacles {
   get list() { return this.cols; }
   // The least signed distance of a set of points (x, y, z flat), and which point (this.at): the whole
   // set's bounding ball turns away the parts and fields it can't reach, then each part that's left takes
-  // all the points in one go. Distances past `cut` come back as just `cut`.
+  // the points in runs of CHUNK, each run's own ball turning it away from a part when it can't come
+  // nearer than what's been found (a part's distance past its faces changes no faster than the point
+  // moves, so a run whose middle is further than its ball's size can't do better: what comes back is
+  // the same as taking every point). Distances past `cut` come back as just `cut`.
   minGap(P, count, cut = Infinity) {
     let cx = 0, cy = 0, cz = 0;
     for (let i = 0; i < count; i++) { cx += P[i * 3]; cy += P[i * 3 + 1]; cz += P[i * 3 + 2]; }
@@ -204,6 +234,19 @@ export class Obstacles {
     const W = this.wb, PS = this.parts;
     let L0 = null, X = this.scratch;
     if (!X || X.length < count * 3) X = this.scratch = new Float64Array(count * 3 + 300);
+    // (each run's middle and size, in the world; its middle in the part's space)
+    const nc = Math.ceil(count / CHUNK);
+    let C = this.runs;
+    if (!C || C.length < nc * 7) C = this.runs = new Float64Array(nc * 7 + 70);
+    for (let k = 0; k < nc; k++) {
+      const a = k * CHUNK, b = Math.min(count, a + CHUNK);
+      let x = 0, y = 0, z = 0;
+      for (let i = a; i < b; i++) { x += P[i * 3]; y += P[i * 3 + 1]; z += P[i * 3 + 2]; }
+      x /= b - a; y /= b - a; z /= b - a;
+      let m2 = 0;
+      for (let i = a; i < b; i++) { const dx = P[i * 3] - x, dy = P[i * 3 + 1] - y, dz = P[i * 3 + 2] - z, d = dx * dx + dy * dy + dz * dz; if (d > m2) m2 = d; }
+      C[k * 7] = x; C[k * 7 + 1] = y; C[k * 7 + 2] = z; C[k * 7 + 3] = Math.sqrt(m2);
+    }
     const toLocal = (L) => {
       if (L0 === L) return;
       L0 = L;
@@ -212,17 +255,28 @@ export class Obstacles {
         const x = P[i * 3], y = P[i * 3 + 1], z = P[i * 3 + 2];
         X[i * 3] = iv[0] * x + iv[4] * y + iv[8] * z + iv[12]; X[i * 3 + 1] = iv[1] * x + iv[5] * y + iv[9] * z + iv[13]; X[i * 3 + 2] = iv[2] * x + iv[6] * y + iv[10] * z + iv[14];
       }
+      for (let k = 0; k < nc; k++) {
+        const x = C[k * 7], y = C[k * 7 + 1], z = C[k * 7 + 2];
+        C[k * 7 + 4] = iv[0] * x + iv[4] * y + iv[8] * z + iv[12]; C[k * 7 + 5] = iv[1] * x + iv[5] * y + iv[9] * z + iv[13]; C[k * 7 + 6] = iv[2] * x + iv[6] * y + iv[10] * z + iv[14];
+      }
     };
     for (let q = 0; q < PS.length; q++) {
       const dx = cx - W[q * 4], dy = cy - W[q * 4 + 1], dz = cz - W[q * 4 + 2];
       if (Math.sqrt(dx * dx + dy * dy + dz * dz) - W[q * 4 + 3] - rad > best) continue;
-      const E = PS[q], pl = E.p.planes, np = pl.length;
+      const E = PS[q], pl = E.p.planes, np = pl.length, sc = E.L.s;
       toLocal(E.L);
-      for (let i = 0; i < count; i++) {
-        const x = X[i * 3], y = X[i * 3 + 1], z = X[i * 3 + 2];
+      for (let k = 0; k < nc; k++) {
+        const mx = C[k * 7 + 4], my = C[k * 7 + 5], mz = C[k * 7 + 6];
         let v = -Infinity;
-        for (let j = 0; j < np; j += 4) { const u = pl[j] * x + pl[j + 1] * y + pl[j + 2] * z - pl[j + 3]; if (u > v) { v = u; if (v >= best) break; } }
-        if (v < best) { best = v; at = i; }
+        for (let j = 0; j < np; j += 4) { const u = pl[j] * mx + pl[j + 1] * my + pl[j + 2] * mz - pl[j + 3]; if (u > v) v = u; }
+        if (v - C[k * 7 + 3] * sc > best + 1e-9) continue;
+        const b = Math.min(count, (k + 1) * CHUNK);
+        for (let i = k * CHUNK; i < b; i++) {
+          const x = X[i * 3], y = X[i * 3 + 1], z = X[i * 3 + 2];
+          let v = -Infinity;
+          for (let j = 0; j < np; j += 4) { const u = pl[j] * x + pl[j + 1] * y + pl[j + 2] * z - pl[j + 3]; if (u > v) { v = u; if (v >= best) break; } }
+          if (v < best) { best = v; at = i; }
+        }
       }
     }
     for (let q = 0; q < this.fields.length; q++) {
@@ -379,10 +433,11 @@ export class ContactSolver {
       arm: pick(union(S.forearm, S.sleeve), 0.03),
       fingers: {},
     };
-    for (const f of FNAMES) this.idx.fingers[f] = pick(S['finger.' + f], 0.005);
+    for (const f of FNAMES) this.idx.fingers[f] = compact(R, pick(S['finger.' + f], 0.005));
     // (the thumb's long bone moves with the thumb, so it's the thumb's; the ball of the thumb is the hand's
     // and the thumb's both: the hand rests on it, and the thumb mustn't press it in)
-    this.idx.fingers.thumb = pick(union(S.thenar, label('thumb1'), label('thumb2'), label('thumb3')), 0.005);
+    this.idx.fingers.thumb = compact(R, pick(union(S.thenar, label('thumb1'), label('thumb2'), label('thumb3')), 0.005));
+    this.idx.body = compact(R, this.idx.body);
     const make = (arm) => {
       const o = { body: new SkinPoints(arm, this.idx.body), heel: new SkinPoints(arm, this.idx.heel), ulnar: new SkinPoints(arm, this.idx.ulnar), fingers: {} };
       for (const f of [...FNAMES, 'thumb']) o.fingers[f] = new SkinPoints(arm, this.idx.fingers[f]);
