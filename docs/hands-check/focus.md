@@ -16,5 +16,3 @@ Thresholds: penetration 2 mm, grip 1 mm, rest 2 mm, nib 0.5 mm, 25° a frame at 
 | interaction | result | frames | worst penetration, mm (p99 of frames) | contacts out of tolerance | joints out of range | fastest joint, °/frame | steps of travel |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | resting beside the book | pass | 124 | book 0.7 (p99 0.0), table 0.7 (p99 0.6), tin 0.5 (p99 0.0), pencil 0.0 (p99 0.0) | 0 | 0 | 20.3 |  |
-
-2 console errors; first: night=5&phase=dusk: Failed to load resource: the server responded with a status of 404 (File not found)
