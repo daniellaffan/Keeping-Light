@@ -181,7 +181,7 @@ In first person (the default; not with `?view=classic`):
 - **Check on real hardware:** the frame rate on an integrated laptop GPU and a phone, pointer lock, the
   touch stick, and the look under a real GPU (everything so far was rendered in software).
 - **Replace the placeholder places** one file at a time (`src/world/places/`); the interface stays.
-- **Known rough edges are listed in REPORT** (M4 and M5): the squat tower from outside, the soft ground
+- **Known rough edges are listed in REPORT** (M4 and M5): the soft ground
   close up, small far boats.
 
 ## Testing notes
