@@ -1,5 +1,6 @@
 // The place itself: Atlantic surf with slow swells, wind, rain, gulls by day, and the lamp's hum.
-// Haar muffles everything.
+// Haar muffles everything. In first person there is also the room: a low tone of the tower itself,
+// and the walls, which take the top off the sea outside while you're indoors.
 import { brownBuffer, whiteBuffer, noiseSource } from './voices.js';
 
 export class Ambience {
@@ -7,7 +8,18 @@ export class Ambience {
     this.ctx = ctx;
     this.out = ctx.createGain(); this.out.gain.value = 0;
     this.lp = ctx.createBiquadFilter(); this.lp.type = 'lowpass'; this.lp.frequency.value = 9000;
-    this.out.connect(this.lp); this.lp.connect(out);
+    // the walls: open (no effect) unless first person puts you indoors
+    this.walls = ctx.createBiquadFilter(); this.walls.type = 'lowpass'; this.walls.frequency.value = 20000;
+    this.wallsG = ctx.createGain(); this.wallsG.gain.value = 1;
+    this.out.connect(this.walls); this.walls.connect(this.wallsG); this.wallsG.connect(this.lp); this.lp.connect(out);
+
+    // room tone: a quiet bed of low, filtered noise, the stone and the stove and the wind in the flue
+    this.roomG = ctx.createGain(); this.roomG.gain.value = 0;
+    const tone = noiseSource(ctx, brownBuffer(ctx));
+    const toneLP = ctx.createBiquadFilter(); toneLP.type = 'lowpass'; toneLP.frequency.value = 180;
+    const toneBP = ctx.createBiquadFilter(); toneBP.type = 'peaking'; toneBP.frequency.value = 95; toneBP.Q.value = 1.4; toneBP.gain.value = 6;
+    tone.connect(toneLP); toneLP.connect(toneBP); toneBP.connect(this.roomG); this.roomG.connect(this.lp);
+    tone.start(0, 3.1);
 
     // surf: two brown-noise beds, a low roar and a hiss that rises with each swell
     this.surfG = ctx.createGain(); this.surfG.gain.value = 0.5;
@@ -62,6 +74,14 @@ export class Ambience {
     this.rainG.gain.setTargetAtTime(c.rain * 0.06, t, 1.5);
     this.humG.gain.setTargetAtTime(c.hum, t, 1.2);
     this.lp.frequency.setTargetAtTime(c.muffle ? 700 : 9000, t, 1.2);
+  }
+
+  // first person: indoors (the room tone up, the outside through the walls) or out of doors
+  setRoom(tone, walls) {
+    const t = this.ctx.currentTime;
+    this.roomG.gain.setTargetAtTime(tone, t, 0.6);
+    this.walls.frequency.setTargetAtTime(walls ? 900 : 20000, t, 0.35);
+    this.wallsG.gain.setTargetAtTime(walls ? 0.6 : 1, t, 0.35);
   }
 
   hush(on) {

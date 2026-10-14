@@ -1,6 +1,9 @@
 // The Keeper: the first-person game. One continuous world (watch room, tower, headland, bay) and one
 // camera; the game's phase machine (main.js) still decides what happens when, and reaches this through
 // thin per-phase wrappers registered under the old scene names (logbook, bay, daymap, vignette, finale).
+// By day you walk out of the door and round the headland to a place; its vignette is read where you
+// stand, then the light fails and the bloom brings you to the table at dusk. The finale's stairs are
+// climbed here too, before the 2D last sunset takes over.
 import * as THREE from 'three';
 import { buildRoom, ROOM } from './room.js';
 import { Book } from './book.js';
@@ -8,10 +11,13 @@ import { Walker } from './walker.js';
 import { Hands, POSE_NAMES } from './hands.js';
 import { TOWER, ROOM_YAW, UNIT } from './geo.js';
 import { Bay, landHeight } from './bay.js';
+import { Headland, DAY } from './headland.js';
 import { NightWatch } from './night.js';
 import { palette } from '../render/scenes/bay-paint.js';
 import { fogColorFor } from '../render/scenes/bay.js';
-import { letter, measure } from '../render/hand.js';
+import { letter, measure, block } from '../render/hand.js';
+import { ARRIVAL, VIGNETTES, QUIET, PLACES } from '../data/story-village.js';
+import { STAIRS } from '../data/story-end.js';
 import { blob, rgba, smooth, clamp, lerp, inkLine, rng } from '../render/paint.js';
 
 const DEG = Math.PI / 180;
@@ -22,6 +28,13 @@ const DAWN_SUN = new THREE.Vector3(0.85, 0.1, -0.4).normalize();
 // the celestial pole (north, 55° up): the stars wheel about it through the night
 const POLE = new THREE.Vector3(0, Math.sin(55 * DEG), -Math.cos(55 * DEG));
 const TIME_SCALES = [1, 2, 4, 0.5, 0.25];
+// the door swings in this far (radians) when it's opened
+const DOOR_OPEN = 1.65;
+// seconds for the light to fail, once the afternoon is spent
+const FAIL_DUR = 7;
+// treads climbed in the finale: by the eighth the head is in the hatch, the lamp room's light above
+// (any higher and it would come up through the empty space under the gallery floor)
+const CLIMB = 8;
 
 const hasReef = (n) => (n.anomalies || []).some((a) => a.type === 'newReef');
 
@@ -67,6 +80,11 @@ export class Keeper {
 
     this.walker = new Walker(game);
     this.walker.onTap = () => this.use();
+    this.walker.onStep = (speed) => this.footstep(speed);
+
+    // the headland by day: the places, walking out of doors, the afternoon clock
+    this.headland = new Headland(this);
+    W.scene.add(this.headland.group);
     this.cam = { pos: new THREE.Vector3(), yaw: 0, pitch: 0, roll: 0, fov: 62 };
     this.state = 'idle';
     this.t = 0; this.st = 0;
@@ -84,7 +102,8 @@ export class Keeper {
 
     // wrappers: what main.js and the debug panel see
     this.wrappers = {};
-    for (const name of ['logbook', 'bay']) this.wrappers[name] = this.wrap(name);
+    for (const name of ['logbook', 'bay', 'daymap', 'vignette']) this.wrappers[name] = this.wrap(name);
+    this.wrappers.finale = this.wrapFinale(game.scenes.finale);
   }
 
   wrap(name) {
@@ -103,11 +122,56 @@ export class Keeper {
       autoPlan() { if (k.state === 'lean' && k.mode === 'dusk') k.book.scene.autoPlan(); },
       closeBook() { k.book.scene.closeBook(); },
       // keeper to keeper, the camera simply carries on (no cross-fade) unless time has jumped
-      seamless(args = {}) { return name === 'logbook' ? args.mode === 'dawn' : args.mode === 'night'; },
+      seamless(args = {}) {
+        if (name === 'logbook') return args.mode === 'dawn';
+        if (name === 'bay') return args.mode === 'night';
+        // walked into a place's trigger: read it where you stand
+        return name === 'vignette' && k.mode === 'day' && args.place !== 'arrival';
+      },
       get fleet() { return k.watch?.fleet; },
       get leaving() { return name === 'bay' ? (k.watch ? k.watch.leaving : k.leaving) : false; },
       set leaving(v) { if (k.watch) k.watch.leaving = v; else k.leaving = v; },
+      // the day's place is read out of doors (audio.js asks which interior it is: none)
+      kind: null,
+      // debug N, and anything else that wants the day over now
+      leave() { if (k.mode === 'day') k.toDusk(); },
     };
+  }
+
+  // The finale: the stairs are climbed in first person; the last sunset and the end card stay the 2D
+  // FinaleScene's, so this wrapper hands over to it by part.
+  wrapFinale(f2d) {
+    const k = this;
+    const stairs = () => k.finalePart === 'stairs';
+    const w = {
+      name: 'finale',
+      get three() { return stairs(); },
+      get keeper() { return stairs() ? k : null; },
+      get safe() { return stairs() ? { w: 1600, h: 1000 } : f2d.safe; },
+      get part() { return stairs() ? 'stairs' : f2d.part; },
+      get leaving() { return stairs() ? k.leaving : f2d.leaving; },
+      enter(args = {}) {
+        k.finalePart = args.part || 'stairs';
+        if (stairs()) k.enter('finale', args);
+        else { k.game.audio?.setSpace?.('out'); f2d.enter(args); }
+      },
+      exit() { k.walker.setEnabled(false); },
+      update(dt) { if (stairs()) k.update(dt); else f2d.update(dt); },
+      draw(L) { if (stairs()) k.drawHud(L); else f2d.draw(L); },
+      hudActive() { return stairs() && k.hudActive(); },
+      look() { return stairs() ? k.look() : f2d.look(); },
+      cursor() { return stairs() ? 'pointer' : f2d.cursor?.(); },
+      paintRect(L) { return f2d.paintRect(L); },
+      seamless() { return false; },
+      tap() { if (stairs()) k.climb(); else f2d.tap(); },
+    };
+    // the 2D scene listens for keys only while it is the current scene; behind this wrapper it isn't
+    this.game.input.on('key', (e) => {
+      if (this.game.scene !== w || stairs()) return false;
+      if (e.key === ' ' || e.key === 'Enter' || e.key === 'ArrowUp') { f2d.tap(); return true; }
+      return false;
+    });
+    return w;
   }
 
   active() { return this.game.scene && this.game.scene.keeper === this; }
@@ -117,12 +181,18 @@ export class Keeper {
     const g = this.game;
     this.night = g.night;
     this.t = 0;
+    if (name === 'daymap') { this.startDay(false); return; }
+    if (name === 'vignette') { this.enterPlace(args.place); return; }
+    if (name === 'finale') { this.enterStairs(); return; }
+    // every phase from dusk on is spent in the watch room, with the door shut
+    this.endDay();
     if (name === 'logbook') {
       this.mode = args.mode || 'dusk';
       this.book.enter(this.mode);
       this.bookNight = this.night.id;
       this.setLight(this.mode === 'dusk' ? 'dusk' : 'dawn');
       if (this.mode === 'dusk') {
+        this.leaving = false;
         this.bay.setNight(this.night);
         this.dawnShips = null; this.watch = null; this.lampLit = false;
         this.room.lever.rotation.x = 0.5;
@@ -178,11 +248,12 @@ export class Keeper {
   setState(s) {
     this.state = s;
     this.st = 0;
-    const walking = s === 'walk', seated = s === 'chair' || s === 'dawn-chair';
+    const walking = s === 'walk' || s === 'fail', seated = s === 'chair' || s === 'dawn-chair';
     this.walker.setEnabled(walking || seated, { lock: walking && !this.game.autoplay });
     if (seated) { this.walker.yaw = this.cam.yaw; this.walker.pitch = this.cam.pitch; }
     this.book.open = s === 'lean';
     if (s === 'lean-in') this.blendTo(this.leanPose(), 1.25, () => this.setState('lean'));
+    if (s === 'door') { this.doorBack = false; this.walker.autoTo = null; this.blendTo(this.doorPose(), 0.6, null, { dip: 0.02 }); }
     if (s === 'rise') this.blendTo(() => this.standPose(), 1.9, () => this.setState('lean-in'), { dip: -0.06 });
     if (s === 'lean-out') this.blendTo(this.standPose(), 0.9, () => {
       const p = this.standPose();
@@ -371,6 +442,290 @@ export class Keeper {
     p.copy(l.applyMatrix4(this.room.group.matrixWorld));
   }
 
+  // ---------------- the day ----------------
+  // The afternoon begins in the watch room with the door shut (time has jumped since dawn); the arrival
+  // begins out on the lane, walking up to the tower with the door standing open.
+  startDay(arrival) {
+    const H = this.headland, n = this.night;
+    this.mode = 'day';
+    this.arrival = arrival;
+    this.watch = null; this.dawnShips = null; this.lampLit = false; this.leaving = false;
+    this.bay.setNight(n);
+    this.bay.setLights(n, false);
+    this.room.lever.rotation.x = 0.5;
+    // the logbook lies shut on the table, as it was left at dawn
+    if (this.bookNight !== n.id) { this.book.enter('dusk'); this.bookNight = n.id; }
+    this.book.setClosed(1);
+    H.group.visible = true;
+    H.hour = arrival ? 18.1 : DAY.from;
+    H.pace = 1;
+    this.dayVisited = false;
+    this.reading = null;
+    this.note = null;
+    this.auto = null;
+    this.setDoor(arrival ? DOOR_OPEN : 0);
+    if (arrival) {
+      // on the lane, about fifty metres east, the tower ahead
+      const p = new THREE.Vector3(24 * UNIT, 0, 60.45 * UNIT);
+      this.walker.place(p.x, this.bay.groundAt(p.x, p.z), p.z);
+      this.faceToward(TOWER.clone().setY(TOWER.y + 3), this.walker);
+      this.walker.pitch = 0.02;
+    } else {
+      const p = this.roomPoint(250, 1.0);
+      this.walker.place(p.x, TOWER.y, p.z);
+      this.faceToward(this.roomPoint(ROOM.door.deg, ROOM.R, 1.4), this.walker);
+      this.walker.pitch = -0.05;
+    }
+    this.walker.speedScale = 1;
+    H.resetTriggers(this.walker.pos);
+    this.inside = null;
+    this.lightKey = null;
+    this.dayLight();
+    this.setState('walk');
+    this.camFromWalker();
+  }
+
+  camFromWalker() {
+    const ep = this.walker.eyePose();
+    this.cam.pos.copy(ep.pos); this.cam.yaw = ep.yaw; this.cam.pitch = ep.pitch; this.cam.roll = ep.roll; this.cam.fov = 62;
+    this.blendT = null;
+    this.applyCamera();
+  }
+
+  // walked into a place (or the arrival): its lines over a soft paper panel, read where you stand
+  enterPlace(place) {
+    // the arrival always begins out on the lane; any other place is read where the walk brought you
+    if (place === 'arrival') this.startDay(true);
+    else if (this.mode !== 'day') this.startDay(false);
+    const n = this.night;
+    let v;
+    if (place === 'arrival') v = ARRIVAL;
+    else v = VIGNETTES[n.id]?.[place];
+    if (!v) {
+      const act = Math.min(3, Math.max(1, n.act));
+      const pool = QUIET[place] || QUIET.lighthouse;
+      v = { title: PLACES[place]?.label || place, lines: pool[act] || pool[3] || pool[1] || ['It is quiet.'] };
+    }
+    this.reading = {
+      place, title: v.title, t: 0, shown: 1, lineT: 0,
+      lines: v.lines.map((l) => (typeof l === 'string' ? { who: null, text: l } : { who: l[0], text: l[1] })),
+    };
+    this.walker.autoTo = null;
+    this.auto = null;
+    if (this.state === 'walk') this.camFromWalker();
+    this.setState('read');
+  }
+
+  readDur(l) { return 0.4 + l.text.length / 38; }
+
+  // click, tap, Space or E: finish the line being written, or the next line, or done
+  advanceRead() {
+    const R = this.reading;
+    if (!R || this.state !== 'read' || R.t < 0.3) return;
+    const cur = R.lines[R.shown - 1];
+    if (R.lineT < this.readDur(cur)) { R.lineT = this.readDur(cur); return; }
+    if (R.shown < R.lines.length) { R.shown++; R.lineT = 0; this.game.audio?.soft?.(); return; }
+    this.game.audio?.page?.();
+    this.reading = null;
+    this.dayVisited = true;
+    // the arrival: walk the rest of the way in; any other day, the afternoon is spent
+    if (this.arrival) this.setState('walk'); else this.startFail();
+  }
+
+  // the light fails: the hour runs on to seven, then the bloom to the table at dusk
+  startFail() {
+    if (this.state === 'fail') return;
+    this.failFrom = this.headland.hour;
+    this.walker.autoTo = null;
+    this.setState('fail');
+  }
+
+  toDusk() {
+    if (this.leaving) return;
+    this.leaving = true;
+    this.game.toDusk();
+  }
+
+  // leaving the day for the watch room: the door shut behind you, the places put away
+  endDay() {
+    if (this.mode === 'day' || this.headland.group.visible) {
+      this.headland.group.visible = false;
+      this.setDoor(0);
+      this.walker.speedScale = 1;
+      this.walker.autoTo = null;
+      this.reading = null;
+    }
+    this.game.audio?.setSpace?.('in');
+    this.inside = true;
+    this.room.hatchGlow.visible = false;
+  }
+
+  setDoor(a) { this.room.door.swing.rotation.y = -a; this.room.door.swing.updateMatrixWorld(true); }
+  doorOpen() { return -this.room.door.swing.rotation.y > 1.2; }
+
+  // the sun and the light for the hour: afternoon, then from half five mixing toward dusk. The sea is
+  // repainted with the light, so it is only recomputed every few game minutes.
+  dayLight() {
+    const h = this.headland.hour, key = Math.floor(h * 12);
+    if (key === this.lightKey) return;
+    this.lightKey = key;
+    const haar = this.night.haar || 0, sun = this.headland.sunDir(h, DUSK_SUN);
+    const k = smooth(DAY.dusk, DAY.to, h);
+    const day = this.lightState('day', haar, sun);
+    this.applyLight(k > 0 ? this.mixLight(day, this.lightState('dusk', haar, sun), k) : day);
+  }
+
+  // walking by day: indoors and out, the pace, the clock, the triggers
+  updateDay(dt) {
+    const g = this.game, H = this.headland, w = this.walker;
+    w.speedScale = H.updatePace(w.pos, dt);
+    if (g.autoplay) this.autoDay(dt);
+    w.update(dt, { collide: (p) => H.collide(p, w.pos), ground: (x, z) => H.ground(x, z) });
+    const ep = w.eyePose();
+    this.cam.pos.copy(ep.pos); this.cam.yaw = ep.yaw; this.cam.pitch = ep.pitch; this.cam.roll = ep.roll;
+    // at the time-lapse pace the view opens a little, as it does when you stride out
+    this.cam.fov += (62 + (w.speedScale - 1) * 1.6 - this.cam.fov) * Math.min(1, dt * 4);
+    // through the door: the room's sound, or the open air's
+    const inside = H.insideTower(w.pos.x, w.pos.z);
+    if (inside !== this.inside) { this.inside = inside; g.audio?.setSpace?.(inside ? 'in' : 'out', true); }
+    const hit = H.triggers(w.pos);
+    if (this.state === 'fail') {
+      this.headland.hour = lerp(this.failFrom, DAY.to, smooth(0, FAIL_DUR, this.st));
+      if (this.st > FAIL_DUR + 0.3) this.toDusk();
+    } else {
+      // the clock runs on with the pace, though not as fast as the stride grows, so the far end of the
+      // lane can still be reached before the light goes
+      H.hour += dt * DAY.rate * Math.sqrt(w.speedScale);
+      if (H.hour >= DAY.to) this.startFail();
+      else if (this.arrival && this.dayVisited && inside) this.startFail();
+      else if (hit && !this.arrival && !this.dayVisited) {
+        if (!(this.night.day.places || []).includes(hit.id)) this.note = { text: 'nobody about today', t: 0 };
+        else { this.dayVisited = true; w.autoTo = null; hit.P.onEnter(g); }
+      }
+    }
+    this.dayLight();
+  }
+
+  // autoplay by day: out of the door and along the lane to the night's place (or, arriving, in at the door)
+  autoDay(dt) {
+    const H = this.headland, w = this.walker, R = ROOM;
+    if (this.state !== 'walk') { w.autoTo = null; return; }
+    if (!this.auto) {
+      const inT = H.insideTower(w.pos.x, w.pos.z);
+      const front = this.roomPoint(R.door.deg, R.R - 0.95), doorIn = this.roomPoint(R.door.deg, R.R - 0.3), doorOut = this.roomPoint(R.door.deg, R.R + R.wall + 1.2);
+      if (this.arrival) {
+        if (!this.dayVisited) return;
+        this.auto = { pts: [doorOut, doorIn, this.roomPoint(250, 1.0)] };
+      } else if (this.dayVisited) return;
+      else if (inT && !this.doorOpen()) this.auto = { pts: [front], then: () => this.setState('door') };
+      else if (inT) this.auto = { pts: [doorIn, doorOut] };
+      else {
+        const n = this.night, focus = n.day.focus || (n.day.places || [])[0] || 'lighthouse';
+        this.auto = { pts: H.route(w.pos, focus) };
+      }
+      this.auto.stuck = 0;
+    }
+    const A = this.auto;
+    const tgt = A.pts[0];
+    if (!tgt) { w.autoTo = null; this.auto = null; A.then?.(); return; }
+    const d = Math.hypot(tgt.x - w.pos.x, tgt.z - w.pos.z);
+    const sp = Math.hypot(w.vel.x, w.vel.y);
+    A.stuck = sp < 0.3 ? A.stuck + dt : 0;
+    if (d < Math.max(0.35, sp * dt * 2.5) || A.stuck > 2.5) { A.pts.shift(); A.stuck = 0; }
+    w.autoTo = A.pts[0] || null;
+    if (!w.autoTo) { this.auto = null; A.then?.(); }
+  }
+
+  // the door: take the ring, pull it in, stand back as it swings past
+  updateDoor() {
+    // the hand takes the ring first, then pulls as the keeper steps back
+    this.setDoor(DOOR_OPEN * ease(smooth(0.85, 2.05, this.st)));
+    if (this.st > 0.85 && !this.doorBack) {
+      this.doorBack = true;
+      this.game.audio?.door?.();
+      this.blendTo(this.doorBackPose(), 1.2, null, { dip: 0 });
+    }
+    if (this.st > 2.15 && !this.blendT) {
+      this.doorBack = false;
+      this.walker.place(this.cam.pos.x, TOWER.y, this.cam.pos.z, this.cam.yaw, this.cam.pitch);
+      this.setState('walk');
+    }
+  }
+
+  // standing back on the latch side, well clear of the door's swing, looking out through the doorway
+  doorBackPose() {
+    const piv = this.room.door.pivot, D = ROOM.door;
+    piv.updateWorldMatrix(true, false);
+    const hinge = new THREE.Vector3().setFromMatrixPosition(piv.matrixWorld);
+    const along = new THREE.Vector3(1, 0, 0).transformDirection(piv.matrixWorld);     // hinge → latch
+    const inward = new THREE.Vector3(0, 0, 1).transformDirection(piv.matrixWorld);    // into the room
+    const eye = hinge.clone().addScaledVector(along, 0.72).addScaledVector(inward, 1.3);
+    eye.y = TOWER.y + 1.62;
+    const out = hinge.clone().addScaledVector(along, D.half).addScaledVector(inward, -3);
+    out.y = TOWER.y + 1.4;
+    return this.poseLooking(eye, out, 62);
+  }
+
+  // footsteps: wood indoors, stone at the door and the slip, gravel on the lane, grass elsewhere
+  footstep(speed) {
+    const a = this.game.audio;
+    if (!a?.footstep) return;
+    const surf = this.mode === 'day' ? this.headland.surface(this.walker.pos) : 'wood';
+    a.footstep(surf, Math.min(1, speed / 3));
+  }
+
+  // ---------------- the finale: the stairs ----------------
+  enterStairs() {
+    const n = this.night;
+    this.endDay();
+    this.mode = 'stairs';
+    this.watch = null; this.dawnShips = null; this.leaving = false;
+    this.bay.setNight(n);
+    this.setLight('dusk');
+    this.lampLit = true;
+    // the logbook shut on the table, its last page written
+    if (this.bookNight !== n.id) { this.book.enter('dawn'); this.bookNight = n.id; }
+    this.book.setClosed(1);
+    this.stair = -1;       // on the floor at the foot of the stairs
+    this.climbT = -9;      // when the last tread was taken
+    this.room.hatchGlow.visible = true;
+    this.applyPose(this.stairPose(-1));
+    this.blendT = null;
+    this.setState('stairs');
+    this.applyCamera();
+  }
+
+  // standing on tread i (-1 the floor), leaning into the climb over the next tread, the rail in hand a
+  // tread further on (as the hands review holds it), looking on round the turn; near the top, up into
+  // the hatch and the light
+  stairPose(i) {
+    const st = ROOM.stairs, rm = (st.r0 + ROOM.R) / 2;
+    const a = st.from + (i + 1) * st.step;
+    const eye = this.roomPoint(a, rm, (i + 1) * st.rise + 1.62);
+    const ahead = this.roomPoint(a + 25, rm - 0.2, (i + 3) * st.rise + 1.3 + smooth(CLIMB - 3, CLIMB - 1, i) * 1.2);
+    return this.poseLooking(eye, ahead, 62);
+  }
+
+  // one tread per click, tap, Space or ↑, with a pause between, as before
+  climb() {
+    if (this.state !== 'stairs' || this.stair >= CLIMB - 1) return;
+    if (this.st - this.climbT < 0.55) return;
+    this.climbT = this.st;
+    this.stair++;
+    this.game.audio?.stairStep?.(this.stair);
+    this.blendTo(this.stairPose(this.stair), 0.55, null, { dip: -0.05 });
+  }
+
+  updateStairs() {
+    const g = this.game;
+    if (g.autoplay && this.st - this.climbT > 0.9 && this.st > 1.5) this.climb();
+    this.railStep = this.stair + 2;
+    if (this.stair >= CLIMB - 1 && this.st - this.climbT > 2 && !this.leaving) {
+      this.leaving = true;
+      g.go('finale', { part: 'sunset' }, { duration: 3.2, center: [0.5, 0.15] });
+    }
+  }
+
   // what the keeper is looking at, close enough to use
   focus() {
     const C = this.bookCentre();
@@ -380,12 +735,22 @@ export class Keeper {
     const fwd = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(this.cam.pitch, this.cam.yaw, 0, 'YXZ'));
     const ang = Math.acos(clamp(d.normalize().dot(fwd), -1, 1));
     if (this.mode && dist < 1.9 && ang < 0.55) return 'book';
+    // by day, the door when it's shut and within reach
+    if (this.mode === 'day' && !this.doorOpen()) {
+      const ring = this.room.door.ring.getWorldPosition(new THREE.Vector3()).sub(eye);
+      const rd = ring.length();
+      if (rd < 1.8 && Math.acos(clamp(ring.normalize().dot(fwd), -1, 1)) < 0.7) return 'door';
+    }
     return null;
   }
 
   use() {
     if (this.state !== 'walk') return;
-    if (this.focus() === 'book') { this.walker.unlock(); this.setState('lean-in'); }
+    const f = this.focus();
+    if (f === 'door') { this.setState('door'); return; }
+    // by day, the table means waiting there for dusk
+    if (f === 'book' && this.mode === 'day') { this.startFail(); return; }
+    if (f === 'book') { this.walker.unlock(); this.setState('lean-in'); }
   }
 
   // ---------------- input ----------------
@@ -422,8 +787,10 @@ export class Keeper {
       }
       return;
     }
+    if (this.state === 'read' && kind === 'down') { this.advanceRead(); return; }
+    if (this.state === 'stairs' && kind === 'down') { this.climb(); return; }
     if (this.state === 'walk' && kind === 'down' && e.pointerType !== 'touch' && this.walker.locked) { this.use(); return; }
-    if (this.state === 'walk' && kind === 'down' && e.pointerType !== 'touch' && this.focus() === 'book' && !this.walker.wantLock) { this.use(); return; }
+    if (this.state === 'walk' && kind === 'down' && e.pointerType !== 'touch' && this.focus() && !this.walker.wantLock) { this.use(); return; }
     if (this.state !== 'lean') return;
     const [nx, ny] = this.ndc(e);
     const hit = this.book.pick(nx, ny, this.world.camera);
@@ -459,6 +826,8 @@ export class Keeper {
     if (this.state === 'chair' && this.watch && (k === ' ' || k === 'l' || k === 'L')) { this.toggleLapse(); return true; }
     if (this.state === 'dawn-chair' && (k === 'e' || k === 'E' || k === 'Enter' || k === ' ')) { this.toLogbook(); return true; }
     if (this.state === 'walk' && (k === 'e' || k === 'E' || k === 'Enter' || k === ' ')) { this.use(); return true; }
+    if (this.state === 'read' && (k === 'e' || k === 'E' || k === 'Enter' || k === ' ')) { this.advanceRead(); return true; }
+    if (this.state === 'stairs' && (k === ' ' || k === 'Enter' || k === 'ArrowUp')) { this.climb(); return true; }
     if (this.state === 'lean') {
       if (k === 'Escape' || k === 'q' || k === 'Q') { this.standUp(); return true; }
       // the logbook's own keys: arrows turn pages, ctrl-z takes back
@@ -492,11 +861,29 @@ export class Keeper {
     const fa = this.book.scene.flipAnim;
     if (this.state === 'review' && fa?.hold) fa.t = 0.42 - dt / 0.55;
     if (this.flash) { this.flash.t += dt; if (this.flash.t > 2.2) this.flash = null; }
+    if (this.note) { this.note.t += dt; if (this.note.t > 3) this.note = null; }
     this.book.update(dt, { redraw: this.state === 'lean' || this.state === 'lean-in' || this.state === 'closing' || this.state === 'lean-out' });
     this.book.setSingle(g.layers.cssW / g.layers.cssH < 0.95);
 
     switch (this.state) {
+      case 'fail':
+        this.updateDay(dt);
+        break;
+      case 'door':
+        this.updateDoor();
+        break;
+      case 'read':
+        this.reading.t += dt; this.reading.lineT += dt;
+        if (g.autoplay && this.reading.t > 0.4) {
+          this.autoT = (this.autoT || 0) + dt;
+          if (this.autoT > 0.25) { this.autoT = 0; this.reading.lineT = 99; this.advanceRead(); }
+        }
+        break;
+      case 'stairs':
+        this.updateStairs();
+        break;
       case 'walk': {
+        if (this.mode === 'day') { this.updateDay(dt); break; }
         this.walker.update(dt, { collide: (p) => this.collideRoom(p) });
         const ep = this.walker.eyePose();
         this.cam.pos.copy(ep.pos); this.cam.yaw = ep.yaw; this.cam.pitch = ep.pitch; this.cam.roll = ep.roll;
@@ -741,7 +1128,9 @@ export class Keeper {
     if (this.poseOverride) return this.poseOverride;
     const sc = this.book.scene;
     switch (this.state) {
-      case 'walk': return 'walk';
+      case 'walk': case 'fail': case 'read': return 'walk';
+      case 'door': return this.st < 1.6 ? 'door' : 'walk';
+      case 'stairs': return 'rail';
       case 'lean-in': return 'lean';
       case 'lean':
         if (sc.inking) return 'pen';
@@ -786,12 +1175,8 @@ export class Keeper {
     fromObj('lid', b.coverLid, new THREE.Vector3(-0.62 / 2 * 0.92, 0, 0.62 / 1512 * 920 / 2 * 0.86));
     // the lever's shaft, a hand's width from the ball
     fromObj('lever', this.room.lever, new THREE.Vector3(0, 0, -0.17));
-    // the door's ring
-    const D = ROOM.door, da = D.deg * DEG;
-    const dl = new THREE.Vector3(Math.sin(da) * (ROOM.R + 0.3) + Math.cos(da) * (D.half - 0.2), 1.0, -Math.cos(da) * (ROOM.R + 0.3) + Math.sin(da) * (D.half - 0.2));
-    const door = this.frame('door');
-    door.pos.copy(dl.applyMatrix4(this.room.group.matrixWorld));
-    door.quat.setFromEuler(new THREE.Euler(0, ROOM_YAW - da, 0, 'YXZ'));
+    // the door's ring, which swings with the door
+    fromObj('door', this.room.door.ring);
     // the stair rail, just ahead of whoever is climbing it
     const rail = this.frame('rail');
     const st = ROOM.stairs, i = this.railStep ?? 3;
@@ -900,7 +1285,8 @@ export class Keeper {
 
   updateClock() {
     // the clocks keep the game's time of day (dusk ≈ 7, through the night, first light ≈ 6)
-    const h = this.watch && this.mode === 'night' ? this.watch.hour() : this.mode === 'dusk' ? 19.2 + this.t / 600 : 5.8 + this.t / 600;
+    const h = this.watch && this.mode === 'night' ? this.watch.hour() : this.mode === 'day' ? this.headland.hour
+      : this.mode === 'dusk' || this.mode === 'stairs' ? 19.2 + this.t / 600 : 5.8 + this.t / 600;
     const r = this.room, S = r.sill;
     r.hourHand.rotation.z = S.hour.rotation.z = -((h % 12) / 12) * Math.PI * 2;
     r.minHand.rotation.z = S.min.rotation.z = -((h % 1)) * Math.PI * 2;
@@ -908,6 +1294,16 @@ export class Keeper {
 
   updatePrompt() {
     this.prompt = null;
+    const mouse = this.game.input.type === 'mouse', use = mouse ? 'E — ' : 'tap — ';
+    if (this.mode === 'day') {
+      const f = this.state === 'walk' ? this.focus() : null;
+      if (f === 'door') this.prompt = use + 'open the door';
+      else if (f === 'book') this.prompt = use + 'wait here for dusk';
+      else if (this.note) this.prompt = this.note.text;
+      else if (this.state === 'walk' && this.st < 7 && this.t < 9 && this.game.state.nightsPlayed < 2) this.prompt = mouse ? 'WASD to walk, the mouse to look' : 'left thumb to walk, right to look';
+      return;
+    }
+    if (this.state === 'stairs' && this.stair < 0 && this.st > 1.2) { this.prompt = (mouse ? 'click — ' : 'tap — ') + STAIRS.prompt; return; }
     if (this.state === 'walk' && this.focus() === 'book') this.prompt = this.game.input.type === 'mouse' ? 'E — lean over the logbook' : 'tap — lean over the logbook';
     else if (this.state === 'walk' && this.st < 6 && this.mode === 'dusk') this.prompt = 'the logbook is open on the table';
     else if (this.state === 'lean' && this.mode === 'dusk' && !this.book.scene.inking) this.prompt = this.game.input.type === 'mouse' ? 'Esc — stand up' : null;
@@ -925,6 +1321,18 @@ export class Keeper {
     const n = this.night;
     const base = { ...n.look };
     base.fog = (n.haar || 0) * 0.8;
+    // the stairs keep the 2D climb's warm grading, whatever the epilogue's palette
+    if (this.mode === 'stairs') return { warmth: 0.55, sat: 0.9, paperShow: 0.22, fog: 0, gran: 0.9, wobble: 3.2, edge: 1.1, inkSpread: 0.1, lightGain: 1 };
+    if (this.mode === 'day') {
+      // the afternoon warms toward dusk as the light goes
+      const k = smooth(DAY.dusk, DAY.to, this.headland.hour), fd = fogColorFor('day'), fk = fogColorFor('dusk');
+      base.fogColor = fd.map((v, i) => v + (fk[i] - v) * k);
+      base.warmth = (n.look.warmth ?? 0.5) - 0.04 + 0.16 * k;
+      base.lightGain = 1;
+      base.wobble = 2.2;
+      if (this.lookOverride) Object.assign(base, this.lookOverride);
+      return base;
+    }
     base.fogColor = fogColorFor(this.mode === 'dawn' ? 'dawn' : 'dusk');
     if (this.mode === 'dusk' || this.mode === 'dawn') base.warmth = (n.look.warmth ?? 0.5) + (this.mode === 'dusk' ? 0.12 : -0.05);
     base.lightGain = 1;
@@ -1008,6 +1416,53 @@ export class Keeper {
     }
   }
 
+  // a place's lines, lettered over a soft paper panel in the lower part of the view (as village.js
+  // lays them out under its pictures)
+  drawReading(L) {
+    const R = this.reading, n = this.night, v = L.view, ink = L.ink, t = R.t;
+    const fade = smooth(0, 0.6, t);
+    const cx = (v.x0 + v.x1) / 2, y0 = Math.max(560, v.y1 - 450);
+    // the paper: a few overlapping blots, so its edge is soft and uneven
+    for (let i = 0; i < 4; i++) {
+      blob(L.paint, cx + (i - 1.5) * 220, y0 + 200 + (i % 2) * 18, 380, 230, '#F2EAD9', 0.24 * fade, 7 + i, 0.18);
+    }
+    blob(L.paint, cx, y0 + 205, 640, 220, '#F4EDDF', 0.55 * fade, 3, 0.1);
+    letter(ink, R.title, cx, y0 + 54, { hand: 'serifItalic', size: 38, align: 'center', alpha: 0.8 * smooth(0.2, 1.2, t) });
+    const first = Math.max(0, R.shown - 4);
+    let y = y0 + 104;
+    const x = cx - 470, w = 940;
+    for (let i = first; i < R.shown; i++) {
+      const l = R.lines[i];
+      const cur = i === R.shown - 1;
+      const reveal = cur ? clamp(R.lineT / this.readDur(l), 0, 1) : 1;
+      const a = (cur ? 1 : Math.max(0.35, 0.8 - (R.shown - 1 - i) * 0.15)) * fade;
+      let h;
+      if (l.who === 'keeper') {
+        h = block(ink, l.text, x + 40, y - 30, { hand: 'keeper', size: 34, width: w - 40, drift: n.drift, seed: i + n.id, reveal, alpha: a }).h;
+      } else if (l.who) {
+        letter(ink, l.who, x - 20, y, { hand: 'serifItalic', size: 25, align: 'right', alpha: 0.6 * a });
+        h = block(ink, '“' + l.text + '”', x, y - 30, { hand: 'serif', size: 31, width: w, seed: i, reveal, alpha: a }).h;
+      } else {
+        h = block(ink, l.text, x, y - 30, { hand: 'serifItalic', size: 31, width: w, seed: i, reveal, alpha: a * 0.92 }).h;
+      }
+      y += h + 14;
+    }
+    const cur = R.lines[R.shown - 1];
+    if (R.lineT >= this.readDur(cur)) {
+      const last = R.shown >= R.lines.length;
+      const pulse = 0.45 + 0.25 * Math.sin(t * 2.4);
+      letter(ink, last ? (this.arrival ? 'on to the tower ›' : 'and the light goes ›') : '…', cx + 500, v.y1 - 38, { hand: last ? 'keeper' : 'serif', size: last ? 34 : 34, align: 'right', alpha: last ? 0.7 : pulse });
+    }
+  }
+
+  // the stairs: a short line every few treads in the Keeper's loosened hand, as in the 2D climb
+  drawStairLines(L) {
+    const line = STAIRS.lines[this.stair + 1];
+    if (!line) return;
+    const v = L.view, a = 0.75 * smooth(0.2, 0.9, this.st - this.climbT) * (1 - smooth(1.6, 2.4, this.st - this.climbT));
+    letter(L.ink, line, (v.x0 + v.x1) / 2 + 160, (v.y0 + v.y1) / 2 - 60, { hand: 'keeper', size: 40, align: 'center', alpha: a, color: '#2B2622', drift: this.night?.drift || 0, seed: this.stair });
+  }
+
   // the window opening on screen, in layout units
   windowOnScreen(L) {
     const w = ROOM.window, R = ROOM.R + 0.42, a = w.deg * DEG;
@@ -1021,6 +1476,7 @@ export class Keeper {
   }
 
   cursor() {
+    if (this.state === 'read' || this.state === 'stairs') return 'pointer';
     if (this.state === 'lean') {
       const c = this.book.input.cursor() || this.book.scene.cursor();
       if (this.pointerOnPage && this.mode === 'dusk' && this.game.input.type === 'mouse' && (!c || c === 'crosshair' || c === 'default')) return 'none';
@@ -1031,11 +1487,13 @@ export class Keeper {
 
   hudActive() {
     const night = this.state === 'chair' && this.watch;
-    return !!this.prompt || !!this.walker.stick || !!this.flash || (night && (this.night.weather === 'rain' || this.nightP > 0.8));
+    return !!this.prompt || !!this.walker.stick || !!this.flash || !!this.reading || this.state === 'stairs' || (night && (this.night.weather === 'rain' || this.nightP > 0.8));
   }
 
   drawHud(L) {
     if (this.state === 'chair' && this.watch) this.drawNightHud(L);
+    if (this.reading) this.drawReading(L);
+    if (this.state === 'stairs') this.drawStairLines(L);
     this.walker.drawTouch(L);
     if (this.flash) {
       const v = L.view;
@@ -1045,7 +1503,9 @@ export class Keeper {
     const v = L.view;
     const x = (v.x0 + v.x1) / 2, y = v.y1 - 70;
     const w = measure(L.ink, this.prompt, 'keeper', 34);
-    let a = this.state === 'walk' && this.focus() !== 'book' ? 0.6 * (1 - smooth(4, 6, this.st)) : 0.85;
+    let a = this.state === 'walk' && !this.focus() ? 0.6 * (1 - smooth(4, 6, this.st)) : 0.85;
+    if (this.note && this.prompt === this.note.text) a = 0.8 * smooth(0, 0.3, this.note.t) * (1 - smooth(2.4, 3, this.note.t));
+    else if (this.mode === 'day' && this.state === 'walk' && !this.focus()) a = 0.6 * smooth(0.5, 1.5, this.st) * (1 - smooth(5, 7, this.st));
     if (this.state === 'chair' && this.watch && !this.noteHover) a = 0.7 * smooth(4, 5.5, this.watch.t) * (1 - smooth(13, 15, this.watch.t));
     blob(L.paint, x, y - 12, w * 0.62 + 30, 30, '#F2EAD9', 0.75 * a, 3, 0.12);
     letter(L.ink, this.prompt, x, y, { hand: 'keeper', size: 34, align: 'center', alpha: a, color: '#2B2622' });

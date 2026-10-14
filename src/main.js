@@ -21,8 +21,8 @@ import { createAudio } from './audio/audio.js';
 const params = new URLSearchParams(location.search);
 const DEBUG = params.get('debug') === '1';
 const AUTOPLAY = DEBUG && params.get('autoplay') === '1';
-// The first-person game is opt-in while it is being built; ?view=classic is the 2D game.
-const FP = params.get('view') === 'fp';
+// The game is played in first person; ?view=classic is the original 2D game, kept whole.
+const FP = params.get('view') !== 'classic';
 
 const canvas = document.getElementById('stage');
 const gl = createGL(canvas);
@@ -269,7 +269,8 @@ function step(dt) {
       wc.u.trans = Math.min(1, game.transition.t / game.transition.dur);
       if (wc.u.trans >= 1) game.transition = null;
     }
-    if (three) {
+    // debug: tests that only need the game's logic can skip painting the frame (game.noRender)
+    if (DEBUG && game.noRender) { /* not painted */ } else if (three) {
       wc.u.surface = 1; wc.u.depthFog = 1;
       wc.u.fogOffset = game.world.fogOffset();
       const src = game.world.render(hud, game.time);
@@ -318,16 +319,22 @@ async function boot() {
   } catch { /* fonts are optional */ }
   clearMeasureCache();
   if (FP) {
-    const { World } = await import('./world/world.js');
-    game.world = new World(game);
-    game.world.resize(layers);
-    const { TestRoomScene } = await import('./world/scenes/test-room.js');
-    game.scenes.testroom = new TestRoomScene(game);
-    // the phases built in first person so far take over their scene names
-    const { Keeper } = await import('./world/keeper.js');
-    game.keeper = new Keeper(game);
-    Object.assign(game.scenes, game.keeper.wrappers);
-    if (DEBUG) (await import('./world/review.js')).installReview(game);
+    try {
+      const { World } = await import('./world/world.js');
+      game.world = new World(game);
+      game.world.resize(layers);
+      const { TestRoomScene } = await import('./world/scenes/test-room.js');
+      game.scenes.testroom = new TestRoomScene(game);
+      // the keeper's first-person phases take over their scene names
+      const { Keeper } = await import('./world/keeper.js');
+      game.keeper = new Keeper(game);
+      Object.assign(game.scenes, game.keeper.wrappers);
+      if (DEBUG) (await import('./world/review.js')).installReview(game);
+    } catch (err) {
+      // if the 3D world can't be built here, the 2D game is still whole: play that instead
+      console.error('first person unavailable, playing the 2D game', err);
+      game.world = null; game.keeper = null; game.fp = false;
+    }
   }
   const loading = document.getElementById('loading');
   loading.style.opacity = '0';

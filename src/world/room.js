@@ -51,7 +51,8 @@ export function buildRoom() {
   b.add(rug, M.rug, { pos: [0.4, 0.006, -0.6], scale: [1.25, 1, 0.85], wonk: 0 });
 
   const st = ROOM.stairs;
-  const holeA0 = st.from + st.step * (st.count - 4), holeA1 = st.from + st.step * (st.count + 1.2);
+  // the hatch up to the lamp opens over the upper half of the flight, so a climber's head clears it
+  const holeA0 = st.from + st.step * (st.count - 8), holeA1 = st.from + st.step * (st.count + 1.2);
   const ceil = new THREE.Shape();
   ceil.absarc(0, 0, R + 0.05, 0, Math.PI * 2, false);
   const hole = new THREE.Path();
@@ -307,11 +308,17 @@ export function buildRoom() {
 
   const sill = buildSill(M, w);
 
+  // the lamp room above, seen up through the hatch as a warm light (only while climbing, in the finale)
+  const hatchGlow = new THREE.Mesh(new THREE.RingGeometry(st.r0 - 0.1, R, 24, 1, Math.PI / 2 + holeA0 * DEG - Math.PI, (holeA1 - holeA0) * DEG), glowMaterial({ emit: 0xf0b060, amt: 0.55 }));
+  hatchGlow.rotation.x = Math.PI / 2;
+  hatchGlow.position.y = H + 0.55;
+  hatchGlow.visible = false;
+
   const group = new THREE.Group();
   group.name = 'watchroom';
-  group.add(b.finish('room'), sb.finish('shelves'), table, control, clock, stove, chair, mug, sill.group, door, buildTop(M));
+  group.add(b.finish('room'), sb.finish('shelves'), table, control, clock, stove, chair, mug, sill.group, door, buildTop(M), hatchGlow);
   return {
-    group, table, lamp, flame, halo, clock, hourHand, minHand, lever: pivot, stove, stoveGlow, chair, mug, M, sill,
+    group, table, lamp, flame, halo, clock, hourHand, minHand, lever: pivot, stove, stoveGlow, chair, mug, M, sill, hatchGlow,
     door: { pivot: door, swing, ring: ringAt },
     // 2D obstacles for walking, in room space: circles [x, z, r] and the stair annulus
     obstacles: {

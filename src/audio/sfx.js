@@ -4,12 +4,17 @@ import { piano, bell, noiseHit, bass, mtof } from './voices.js';
 const CHIME = [72, 74, 77, 79, 81, 84]; // F major pentatonic, high
 
 export class Sfx {
-  constructor(ctx, out, reverbSend) {
+  constructor(ctx, out, reverbSend, spaceSend = reverbSend) {
     this.ctx = ctx;
     this.bus = ctx.createGain(); this.bus.gain.value = 0.9;
     this.bus.connect(out);
     this.send = ctx.createGain(); this.send.gain.value = 0.5;
     this.bus.connect(this.send); this.send.connect(reverbSend);
+    // footsteps and the door sit in the space you're in (the room, or the open air)
+    this.steps = ctx.createGain(); this.steps.gain.value = 0.9;
+    this.steps.connect(out);
+    const ss = ctx.createGain(); ss.gain.value = 0.8;
+    this.steps.connect(ss); ss.connect(spaceSend);
     this.lastPencil = 0;
   }
 
@@ -91,6 +96,42 @@ export class Sfx {
     const t = this.now;
     noiseHit(this.ctx, this.bus, t, { type: 'lowpass', freq: 380 + i * 12, q: 0.8, vel: 0.12, d: 0.18 });
     noiseHit(this.ctx, this.bus, t + 0.02, { type: 'bandpass', freq: 1200, q: 1, vel: 0.025, d: 0.08 });
+  }
+
+  // a footstep: boards in the tower, stone at the door and the slip, the lane's gravel, the grass
+  footstep(surface = 'grass', v = 0.5) {
+    const t = this.now, c = this.ctx, o = this.steps, k = (0.65 + 0.35 * v) * (0.85 + Math.random() * 0.3);
+    const f = () => 0.9 + Math.random() * 0.2;
+    if (surface === 'wood') {
+      noiseHit(c, o, t, { type: 'lowpass', freq: 210 * f(), q: 0.8, vel: 0.16 * k, d: 0.09 });
+      noiseHit(c, o, t + 0.008, { type: 'bandpass', freq: 680 * f(), q: 2.2, vel: 0.05 * k, d: 0.05 });
+    } else if (surface === 'stone') {
+      noiseHit(c, o, t, { type: 'bandpass', freq: 1500 * f(), q: 1.3, vel: 0.07 * k, d: 0.045 });
+      noiseHit(c, o, t, { type: 'lowpass', freq: 320 * f(), q: 0.7, vel: 0.08 * k, d: 0.06 });
+    } else if (surface === 'gravel') {
+      for (let i = 0; i < 4; i++) noiseHit(c, o, t + i * 0.016 + Math.random() * 0.01, { type: 'bandpass', freq: 2600 + Math.random() * 2200, q: 1.6, vel: 0.032 * k, d: 0.03 });
+      noiseHit(c, o, t, { type: 'lowpass', freq: 420 * f(), q: 0.6, vel: 0.05 * k, d: 0.06 });
+    } else {
+      noiseHit(c, o, t, { type: 'bandpass', freq: 2100 * f(), q: 0.6, vel: 0.034 * k, a: 0.02, d: 0.12 });
+      noiseHit(c, o, t, { type: 'lowpass', freq: 240 * f(), q: 0.6, vel: 0.05 * k, d: 0.08 });
+    }
+  }
+
+  // the door: the latch lifts, and the old hinge complains a little as it swings
+  door() {
+    const ctx = this.ctx, t = this.now;
+    noiseHit(ctx, this.steps, t, { type: 'bandpass', freq: 2800, q: 2, vel: 0.06, d: 0.025 });
+    noiseHit(ctx, this.steps, t + 0.05, { type: 'lowpass', freq: 400, q: 0.8, vel: 0.05, d: 0.06 });
+    const o = ctx.createOscillator(); o.type = 'sawtooth';
+    o.frequency.setValueAtTime(190, t + 0.15);
+    for (let i = 1; i < 9; i++) o.frequency.linearRampToValueAtTime(170 + Math.random() * 90, t + 0.15 + i * 0.11);
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1100; bp.Q.value = 6;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t + 0.15);
+    g.gain.linearRampToValueAtTime(0.018, t + 0.3);
+    g.gain.setTargetAtTime(0.0001, t + 0.9, 0.12);
+    o.connect(bp); bp.connect(g); g.connect(this.steps);
+    o.start(t + 0.15); o.stop(t + 1.6);
   }
 
   // one held note as the paint goes back into the paper
