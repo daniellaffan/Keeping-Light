@@ -113,6 +113,7 @@ export const CONTACTS = CONTACTS_;
 // ---------------------------------------------------------------------------------------------------
 // How the contact solver (contact.js) lays each hand on what its pose rests on or holds:
 //   anchor   the hand's part laid down onto what is below it (the heel, on a resting hand)
+//   grasp    what the hand closes round (its palm brought onto it)
 //   fingers  per finger (or `all`): 'touch' curls it toward the palm until it touches something;
 //            'free' leaves it as posed, only straightened as far as it must be to come out of something;
 //            'fixed' leaves it as posed. The thumb likewise.
@@ -122,8 +123,12 @@ const RESTING = { anchor: 'heel', fingers: { all: 'touch', thumb: 'touch' } };
 // little-finger edge: the thumb, index and middle finger as posed with their pads on the shaft
 // (hands.js), the ring and little fingers kept out of things (but the tool they hold)
 const HOLDING = { anchor: 'ulnar', fingers: { all: 'free', thumb: 'fixed', index: 'fixed', middle: 'fixed' } };
+// round something held (grasp): the hand moved in until its palm is on it, the fingers (and the thumb,
+// where it goes round too) closed until they touch it
+const GRASP = (on, thumb) => ({ grasp: [on], fingers: { all: 'touch', thumb: thumb ? 'touch' : 'free' } });
 export const GRIPS = {
   lean: { R: RESTING, L: RESTING },
   ready: { R: HOLDING, L: RESTING }, write: { R: HOLDING, L: RESTING }, pen: { L: RESTING }, turn: { L: RESTING }, close: { R: RESTING },
-  'ink-tray': { L: RESTING }, 'ink-well': { L: RESTING }, 'ink-take': { L: RESTING }, 'ink-lift': { L: RESTING },
+  mug: { R: GRASP('mug'), L: GRASP('mug') }, lamp: { R: GRASP('lever', true) }, rail: { R: GRASP('rail') },
+  'ink-tray': { L: RESTING }, 'ink-well': { R: GRASP('inkwell', true), L: RESTING }, 'ink-take': { L: RESTING }, 'ink-lift': { L: RESTING },
 };

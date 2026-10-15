@@ -382,7 +382,7 @@ const CURL_RATE = 4;          // how fast a finger curls or opens (a curl of 1 a
 const STUCK = 3;              // times the hand is moved out with a finger that can't get out on its own
 const LIFT_STEPS = 3;         // bisection steps for how far a hand taken out is let down again in a frame
 // the most times the hand is moved in a frame: pushed out 5 times, laid down and turned (twice: a move
-// and 4 turns), pushed out twice more, let down from where a stuck finger took it (tried, bisected, put
+// and 4 turns; or a grasp: taken where it was last frame and moved in 4 times), pushed out twice more, let down from where a stuck finger took it (tried, bisected, put
 // at what was found, and back where it was laid if that has it in something), and moved with a stuck
 // finger (a fixed number: it never runs on)
 export const MOVES = 5 + 2 * (1 + 4) + 2 + (3 + LIFT_STEPS) + STUCK;
@@ -419,6 +419,7 @@ export class ContactSolver {
     this.hands = hands;
     this.ob = new Obstacles(colliders);
     this.fob = new Obstacles(colliders);
+    this.gob = new Obstacles(colliders);
     const R = hands.R, cls = this.cls = classifySkin(R), S = cls.sets;
     const pick = (set, sp) => sample(R, set, sp);
     const label = (name) => { const i = LABELS.indexOf(name), out = []; for (let v = 0; v < cls.n; v++) if (cls.label[v] === i) out.push(v); return Int32Array.from(out); };
@@ -430,6 +431,7 @@ export class ContactSolver {
       body: union(pick(S['palm.all'], 0.008), pick(wristEnd, 0.008)),
       heel: pick(S.heel, 0.004),
       ulnar: pick(S.ulnar, 0.004),
+      palm: pick(S.palm, 0.004),
       arm: pick(union(S.forearm, S.sleeve), 0.03),
       fingers: {},
     };
@@ -438,8 +440,9 @@ export class ContactSolver {
     // and the thumb's both: the hand rests on it, and the thumb mustn't press it in)
     this.idx.fingers.thumb = compact(R, pick(union(S.thenar, label('thumb1'), label('thumb2'), label('thumb3')), 0.005));
     this.idx.body = compact(R, this.idx.body);
+    this.idx.palm = compact(R, this.idx.palm);
     const make = (arm) => {
-      const o = { body: new SkinPoints(arm, this.idx.body), heel: new SkinPoints(arm, this.idx.heel), ulnar: new SkinPoints(arm, this.idx.ulnar), fingers: {} };
+      const o = { body: new SkinPoints(arm, this.idx.body), heel: new SkinPoints(arm, this.idx.heel), ulnar: new SkinPoints(arm, this.idx.ulnar), palm: new SkinPoints(arm, this.idx.palm), fingers: {} };
       for (const f of [...FNAMES, 'thumb']) o.fingers[f] = new SkinPoints(arm, this.idx.fingers[f]);
       return o;
     };
@@ -520,6 +523,28 @@ export class ContactSolver {
         return { g: best, n: ob.n.clone(), p };
       };
       push(5);
+      // a hand that grasps something (the lever, the mug, the rail, the inkwell): taken where it was
+      // grasping it last frame (from the pose's place), then moved in until the nearest of its palm is on
+      // it, by no more than a hand moves (LAY_RATE); the fingers then close round it (touch)
+      if (spec.grasp) {
+        const gob = this.gob.gather(w.x, w.y, w.z, 0.2, spec.grasp), A = P.palm;
+        const g0 = arm.grab ? arm.grab.clone().multiplyScalar(W) : new THREE.Vector3();
+        const r = ctx.dt > 0 ? LAY_RATE * ctx.dt : Infinity, d = new THREE.Vector3();
+        if (g0.lengthSq() > 0) move(g0.x, g0.y, g0.z);
+        for (let it = 0; it < 4 && gob.list.length; it++) {
+          boneMatrices(arm, M);
+          A.update(M);
+          const g = gob.minGap(A.pos, A.count), i = gob.at;
+          if (!Number.isFinite(g) || Math.abs(g - MARGIN) < 0.0002) break;
+          gob.sd(A.pos[i * 3], A.pos[i * 3 + 1], A.pos[i * 3 + 2], true, true);
+          const k = W * Math.max(-0.03, Math.min(0.03, g - MARGIN));
+          const m = _u.copy(gob.n).multiplyScalar(-k).add(d).clampLength(0, r).sub(d);
+          if (m.lengthSq() < 1e-12) break;
+          move(m.x, m.y, m.z);
+          d.add(m);
+        }
+        arm.grab = g0.add(d);
+      } else arm.grab = null;
       if (spec.anchor) {
         // down onto what's below the heel, by its gap; then whatever of the hand that puts into something
         // (the ball of the thumb, the knuckles) turns the hand up about the heel until it's out: a hand
@@ -561,7 +586,7 @@ export class ContactSolver {
       } else arm.lay = 0;
       ctx.T.copy(T);
       ctx.wq = q;
-    } else arm.lay = 0;
+    } else { arm.lay = 0; arm.grab = null; }
     // the fingers and the thumb, each on its own (the wrist is where it will be). Each goes where its role
     // puts it, as fast as a finger moves (CURL_RATE), and out of anything at once if there's a way out
     // within this frame's turn of it. A finger in something on its way (or in however it's curled) takes

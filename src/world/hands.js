@@ -564,7 +564,7 @@ export class Hands {
     if (this.lastBody && (body.pos.distanceTo(this.lastBody.pos) > 0.5 || body.quat.angleTo(this.lastBody.quat) > 1.0)) {
       this.lastBody = null; this.from = null; this.blend = 1;
       this.spring = { R: null, L: null };
-      for (const a of [this.R, this.L]) { a.pp = null; a.roll = null; a.curl = null; a.lay = null; a.lift = null; a.lean = null; }
+      for (const a of [this.R, this.L]) { a.pp = null; a.roll = null; a.curl = null; a.lay = null; a.lift = null; a.lean = null; a.grab = null; }
       for (const s of ['R', 'L']) cur[s] = this.resolve(POSES[this.pose][s], s, frames, body0[s], poles[s]);
     }
     // What carries each hand's follower. A hand settled in a pose rides with that pose's frame (the
