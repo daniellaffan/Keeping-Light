@@ -671,6 +671,100 @@ export class ContactSolver {
     return curl;
   }
 
+  // A hand placed by its tool's point (writing) is turned about the point to lay it, found from the hand
+  // alone (its edge and body as they sit on the wrist; the arm then reaches for that turn at its own
+  // pace): down about the point until its edge (and the little finger curled under it) is on the page,
+  // then about the line from the point to where the edge rests until its body is out of the page; twice.
+  // The same point and pose, the same turn. q: the pose's turn of the wrist, p: the point, grip: the
+  // point in the wrist's frame.
+  layPoint(s, arm, q, p, grip, skip) {
+    const ob = this.ob, P = this.pts[s], M = this.M[s];
+    arm.root.updateWorldMatrix(true, true);
+    boneMatrices(arm, M);
+    const inv = _mm.copy(arm.B.wrist.matrixWorld).invert().elements;
+    const L = (this.lp ||= {});
+    // (the edge's and the body's points in the wrist's frame, and where they are with the wrist turned q)
+    const local = (S, k) => {
+      S.update(M);
+      const X = S.pos, n = S.count, A = (L[k] && L[k].length === n * 3) ? L[k] : (L[k] = new Float64Array(n * 3));
+      for (let i = 0; i < n; i++) {
+        const x = X[i * 3], y = X[i * 3 + 1], z = X[i * 3 + 2];
+        A[i * 3] = inv[0] * x + inv[4] * y + inv[8] * z + inv[12];
+        A[i * 3 + 1] = inv[1] * x + inv[5] * y + inv[9] * z + inv[13];
+        A[i * 3 + 2] = inv[2] * x + inv[6] * y + inv[10] * z + inv[14];
+      }
+      (L[k + 'W'] && L[k + 'W'].length === n * 3) || (L[k + 'W'] = new Float64Array(n * 3));
+      return n;
+    };
+    const nE = local(P.ulnar, 'e'), nF = local(P.fingers.little, 'f'), nB = local(P.body, 'b');
+    const place = (k, n, q) => {
+      const A = L[k], O = L[k + 'W'], w = _w.copy(grip).applyQuaternion(q).negate().add(p);
+      const m = _mm.makeRotationFromQuaternion(q).elements;
+      for (let i = 0; i < n; i++) {
+        const x = A[i * 3], y = A[i * 3 + 1], z = A[i * 3 + 2];
+        O[i * 3] = m[0] * x + m[4] * y + m[8] * z + w.x;
+        O[i * 3 + 1] = m[1] * x + m[5] * y + m[9] * z + w.y;
+        O[i * 3 + 2] = m[2] * x + m[6] * y + m[10] * z + w.z;
+      }
+      return O;
+    };
+    ob.gather(p.x, p.y, p.z, 0.2, null, skip);
+    // (how far the edge is above what's below it, as heel() has it)
+    const edge = (q) => {
+      const H = place('e', nE, q), F = place('f', nF, q);
+      let best = DOWN, bi = -1, BX = H;
+      for (let j = 0; j < nE + nF; j++) {
+        const i = j < nE ? j : j - nE, X = j < nE ? H : F;
+        const x = X[i * 3], y = X[i * 3 + 1], z = X[i * 3 + 2];
+        let t = ob.sd(x, y, z, false, false, best + 0.01);
+        if (t > MARGIN) {
+          for (let k = 0; k < 10 && t < best; k++) {
+            const d = ob.sd(x, y - t, z, false, false, best - t + 0.01);
+            if (d < 0.0002) break;
+            t += d;
+          }
+        }
+        if (t < best) { best = t; bi = i; BX = X; }
+      }
+      if (bi < 0) return null;
+      const x = new THREE.Vector3(BX[bi * 3], BX[bi * 3 + 1], BX[bi * 3 + 2]);
+      if (best > MARGIN) return { g: best, n: new THREE.Vector3(0, 1, 0), x };
+      ob.sd(x.x, x.y, x.z, true, true, 0.05);
+      return { g: best, n: ob.n.clone(), x };
+    };
+    const deepest = (q) => {
+      const B = place('b', nB, q), worst = MARGIN - ob.minGap(B, nB, CUT), i = ob.at;
+      if (worst <= 1e-6) return null;
+      ob.sd(B[i * 3], B[i * 3 + 1], B[i * 3 + 2]);
+      return { worst, x: new THREE.Vector3(B[i * 3], B[i * 3 + 1], B[i * 3 + 2]), n: ob.n.clone() };
+    };
+    q = q.clone();
+    const turn = (axis, ang) => q.premultiply(_qt.setFromAxisAngle(axis, ang));
+    for (let pass = 0; pass < 2; pass++) {
+      let h = null;
+      for (let it = 0; it < 4; it++) {
+        h = edge(q);
+        if (!h || Math.abs(h.g - MARGIN) < 0.0002) break;
+        const lever = h.x.clone().sub(p);
+        lever.addScaledVector(h.n, -lever.dot(h.n));
+        if (lever.length() < 0.02) break;
+        turn(_f.crossVectors(h.n, lever).normalize(), Math.max(-0.3, Math.min(0.3, Math.atan2(h.g - MARGIN, lever.length()))));
+      }
+      h = edge(q);
+      if (!h) break;
+      const a = h.x.clone().sub(p).normalize();
+      for (let it = 0; it < 3; it++) {
+        const d = deepest(q);
+        if (!d) break;
+        // (how fast the point goes along its way out, turned about the line)
+        const v = _mid.crossVectors(a, d.x.sub(p)).dot(d.n);
+        if (Math.abs(v) < 0.005) break;
+        turn(a, Math.max(-0.3, Math.min(0.3, d.worst / v)));
+      }
+    }
+    return q;
+  }
+
   // The arm's bulk (forearm and sleeve, sampled every 2 cm) at a trial elbow, kept clear of the room
   // by 12 mm: what it costs. armBegin gathers what is near the whole arm, once a solve.
   armBegin(arm, S, T) {

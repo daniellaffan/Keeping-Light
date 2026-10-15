@@ -347,7 +347,7 @@ export class Keeper {
     return new THREE.Vector3(Math.sin(deg * DEG) * r, y, -Math.cos(deg * DEG) * r).applyMatrix4(this.room.group.matrixWorld);
   }
 
-  bookCentre() { return this.book.single ? this.book.worldAt(430, 640) : this.book.worldAt(800, 480); }
+  bookCentre(single = this.book.single) { return single ? this.book.worldAt(430, 640, undefined, true) : this.book.worldAt(800, 480, undefined, false); }
   bookAxes() {
     const m = this.book.group.matrixWorld;
     const toward = new THREE.Vector3(0, 0, 1).transformDirection(m);   // toward the reader
@@ -378,16 +378,18 @@ export class Keeper {
 
   // leaning over the book: it fills most of the screen, a little off-axis, the far edge of the table
   // and the lamp still in view. On a phone held upright the page is seen nearly flat-on.
-  leanPose() {
-    const C = this.bookCentre();
+  // (landscape: as it is on a landscape screen, the logbook open at two pages, whatever the screen is)
+  leanPose(landscape = false) {
+    const single = landscape ? false : this.book.single;
+    const C = this.bookCentre(single);
     const { toward, right } = this.bookAxes();
     const L = this.game.layers;
-    const aspect = L.cssW / L.cssH;
+    const aspect = landscape ? 1.6 : L.cssW / L.cssH;
     const portrait = aspect < 0.95;
     const fov = portrait ? 56 : 50;
     const elev = (portrait ? 80 : 56) * DEG;
     const tv = Math.tan(fov * DEG / 2), th = tv * aspect;
-    const ex = this.book.extent();
+    const ex = this.book.extent(single);
     // the book takes about four fifths of the width (all of it on a phone); the near edge stays in view
     const dist = Math.max(ex.w * 0.5 / (th * (portrait ? 0.97 : 0.8)), ex.h * Math.sin(elev) * 0.5 / (tv * (portrait ? 0.9 : 0.7)));
     // off-axis: from a little right of the spine, turned a touch left so the lamp stands at the edge of view
@@ -1311,7 +1313,16 @@ export class Keeper {
     const c = this.cam, _s = new THREE.Vector3();
     const body = this.frame('body');
     body.pos.copy(c.pos);
-    body.quat.setFromEuler(new THREE.Euler(c.pitch * 0.35, c.yaw, 0, 'YXZ'));
+    // on a phone held upright the camera rises over the book to show the whole page, but the body sits
+    // where it would in landscape: the camera's rise is taken off it, as far as the camera has made it
+    let pitch = c.pitch;
+    if (this.book.single) {
+      const up = this.leanPose(), sit = this.leanPose(true), rise = up.pos.distanceTo(sit.pos);
+      const w = rise > 1e-6 ? Math.max(0, 1 - c.pos.distanceTo(up.pos) / rise) : 0;
+      body.pos.addScaledVector(sit.pos.clone().sub(up.pos), w);
+      pitch += w * (sit.pitch - up.pitch);
+    }
+    body.quat.setFromEuler(new THREE.Euler(pitch * 0.35, c.yaw, 0, 'YXZ'));
     body.fwd.set(0, 0, -1).applyQuaternion(body.quat);
     const fromObj = (name, obj, local = null, extra = null) => {
       const f = this.frame(name);
@@ -1416,6 +1427,8 @@ export class Keeper {
     this.lookOverride = { fog: haar ? 0.55 : 0, haar };
     this.world.shared.uFogDensity.value = haar ? 0.35 : this.world.shared.uFogDensity.value;
     this.world.shared.uFogNear.value = haar ? 0.4 : 8;
+    // (the logbook laid out for the screen first, one page or two, so the camera frames what is shown)
+    this.book.setSingle(this.game.layers.cssW / this.game.layers.cssH < 0.95);
     const C = this.bookCentre();
     let p;
     if (['write', 'ready', 'pen', 'lean', 'turn', 'close'].includes(pose) || pose.startsWith('ink')) {

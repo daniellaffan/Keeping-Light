@@ -53,7 +53,8 @@ const WRAP = (target, thumb, when = 'steady') => [
   { id: 'fingertips on the ' + target, parts: TIPS, need: 3, target: [target], tol: T.gripMm, when },
   ...(thumb ? [{ id: 'thumb on the ' + target, parts: ['tip.thumb'], target: [target], tol: T.gripMm, when }] : []),
 ];
-const EDGE = (on) => ({ id: 'little-finger edge on the ' + on, parts: ['ulnar'], target: on === 'page' ? ['book', 'table'] : ['table', 'book'], tol: T.restMm, when: 'steady' });
+// (writing near the page's right edge, the hand rests on the pencil tray beside the book)
+const EDGE = (on) => ({ id: 'little-finger edge on the ' + on, parts: ['ulnar'], target: on === 'page' ? ['book', 'table', 'tray'] : ['table', 'book'], tol: T.restMm, when: 'steady' });
 
 // the keeper's states in which each pose is settled (the 'steady' contacts hold only there)
 export const STEADY = {
@@ -117,11 +118,12 @@ export const CONTACTS = CONTACTS_;
 //            'fixed' leaves it as posed. The thumb likewise.
 // A hand with no grip here is kept out of things, its fingers free.
 const RESTING = { anchor: 'heel', fingers: { all: 'touch', thumb: 'touch' } };
-// the pencil held, the hand resting on its little-finger edge: the fingers as posed (thumb, index and
-// middle finger with their pads on the shaft: hands.js), kept out of things (but the tool they hold)
-const HOLDING = { anchor: 'ulnar', fingers: { all: 'free' } };
+// the pencil held (ready, or writing: the hand placed by the point), the hand resting on its
+// little-finger edge: the thumb, index and middle finger as posed with their pads on the shaft
+// (hands.js), the ring and little fingers kept out of things (but the tool they hold)
+const HOLDING = { anchor: 'ulnar', fingers: { all: 'free', thumb: 'fixed', index: 'fixed', middle: 'fixed' } };
 export const GRIPS = {
   lean: { R: RESTING, L: RESTING },
-  ready: { R: HOLDING, L: RESTING }, write: { L: RESTING }, pen: { L: RESTING }, turn: { L: RESTING }, close: { R: RESTING },
+  ready: { R: HOLDING, L: RESTING }, write: { R: HOLDING, L: RESTING }, pen: { L: RESTING }, turn: { L: RESTING }, close: { R: RESTING },
   'ink-tray': { L: RESTING }, 'ink-well': { L: RESTING }, 'ink-take': { L: RESTING }, 'ink-lift': { L: RESTING },
 };

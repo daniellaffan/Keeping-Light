@@ -219,15 +219,16 @@ export class Book {
     return [x / S + 800, z / S + 500, false];
   }
 
-  // World position of a logical point on the page (for the pencil tip, the camera aim).
-  worldAt(lx, ly, out = new THREE.Vector3()) {
-    if (this.single) out.set((lx - 430) * this.singleScale, 0.036, (ly - 626) * this.singleScale);
+  // World position of a logical point on the page (for the pencil tip, the camera aim); `single`: as it
+  // would be laid out for one page or two
+  worldAt(lx, ly, out = new THREE.Vector3(), single = this.single) {
+    if (single) out.set((lx - 430) * this.singleScale, 0.034 + 0.003 * (1 - Math.min(1, Math.abs(lx - 430) / 430) ** 2), (ly - 626) * this.singleScale);
     else out.set((lx - 800) * S, spreadHeight(lx, ly), (ly - 500) * S);
     return out.applyMatrix4(this.group.matrixWorld);
   }
 
   // the extent of the visible sheet in book space, for framing the camera
-  extent() {
-    return this.single ? { w: 0.34, h: 0.34 / 860 * 1220 } : { w: COVER.w * S, h: COVER.h * S };
+  extent(single = this.single) {
+    return single ? { w: 0.34, h: 0.34 / 860 * 1220 } : { w: COVER.w * S, h: COVER.h * S };
   }
 }

@@ -26,6 +26,7 @@ const lerp = (a, b, t) => a + (b - a) * t;
 const smooth01 = (x) => x * x * (3 - 2 * x);
 const onTable = (p) => p?.frame === 'book';
 const LIFT = 0.06;     // how high a hand rises over the table's edge, on its way onto it or off it (m)
+const LEAN_RATE = 0.6; // how fast the writer leans along the book after the point (m/s)
 
 // The skin is built once, for the right hand at rest, and shared (mirrored) by both arms. Building it
 // takes a second or so, so the game starts it in a worker as it boots (prepareSkin) and waits for it
@@ -314,15 +315,15 @@ export const POSES = {
   // ready to write: the same, the pencil lying in the right hand, which rests on its little-finger side
   ready: {
     R: hand(TRIPOD, { frame: 'book', pos: [0.41, 0.05, 0.2], rot: [0.0, 0.42, -0.62], hold: 'pencil',
-      fingers: { index: [-0.016, 0.51, 0.39, -0.077], middle: [0.952, 0.63, 0.464, -0.29], ring: [0, 1.31, 1.48, 0.75], little: [0.05, 1.57, 1.74, 0.88] },
-      thumb: [0.58, -0.38, 0.28, 0, -0.59] }),
+      fingers: { index: [0.01, 0.542, 0.449, -0.084], middle: [0.883, 0.636, 0.487, -0.243], ring: [0, 1.31, 1.48, 0.75], little: [0.05, 1.57, 1.74, 0.88] },
+      thumb: [0.561, -0.398, 0.324, -0.023, -0.489] }),
     L: hand(FLAT, { frame: 'book', pos: [-0.412, 0.019, 0.127], rot: [0.37, 0.17, -0.03] }),
   },
   // writing: the pencil tip is placed by IK under the cursor, the hand trailing behind it to the lower
   // right; the left hand stays where it was, beside the book
   write: {
-    R: hand(TRIPOD, { frame: 'book', tip: true, hold: 'pencil', rot: [-0.08, 0.52, -0.55],
-      fingers: { index: [-0.016, 0.51, 0.39, -0.077], middle: [0.952, 0.63, 0.464, -0.29] }, thumb: [0.58, -0.38, 0.28, 0, -0.59] }),
+    R: hand(TRIPOD, { frame: 'book', tip: true, hold: 'pencil', rot: [-0.0985, 0.5169, -0.5099], home: [0.144, 0], follow: [0.6009, -0.1093, 0.1041], lean: 0.8,
+      fingers: { index: [0.01, 0.542, 0.449, -0.084], middle: [0.883, 0.636, 0.487, -0.243], ring: [0, 1.31, 1.48, 0.75], little: [0.3, 1.57, 1.74, 0.88] }, thumb: [0.561, -0.398, 0.324, -0.023, -0.489] }),
     L: hand(FLAT, { frame: 'book', pos: [-0.412, 0.019, 0.127], rot: [0.37, 0.17, -0.03] }),
   },
   // the dip pen: held a little more upright, the same left hand
@@ -370,7 +371,7 @@ export const POSES = {
   // the pencil set down in the tray, point first
   'ink-tray': {
     R: hand(TRIPOD, { frame: 'trayPencil', grasp: 'pencil', hold: 'pencil',
-      fingers: { index: [-0.016, 0.51, 0.39, -0.077], middle: [0.952, 0.63, 0.464, -0.29] }, thumb: [0.58, -0.38, 0.28, 0, -0.59] }),
+      fingers: { index: [0.01, 0.542, 0.449, -0.084], middle: [0.883, 0.636, 0.487, -0.243] }, thumb: [0.561, -0.398, 0.324, -0.023, -0.489] }),
     L: hand(FLAT, { frame: 'book', pos: [-0.412, 0.019, 0.127], rot: [0.37, 0.17, -0.03] }),
   },
   // the hand round the inkwell, thumb over the top, to slide it in beside the book
@@ -423,8 +424,8 @@ export class Hands {
     this.R.hold('pen', this.pen);
     this.tools = { pencil: this.pencil, pen: this.pen };
     // where each tool sits in the right wrist's frame for the tripod grip: shaft back over the
-    // web of the thumb, tip out past the index pad
-    this.gripPencil = { pos: new THREE.Vector3(-0.028, -0.065, -0.152), rot: new THREE.Euler(0.9, -0.1368, 0, 'YXZ') };
+    // web of the thumb, tip out past the index pad, the pencil about 48° up from the page as it writes
+    this.gripPencil = { pos: new THREE.Vector3(-0.0222, -0.0752, -0.1489), rot: new THREE.Euler(0.6912, -0.1553, 0.1239, 'YXZ') };
     // the quill a touch more upright, its feather back over the hand
     this.gripPen = { pos: new THREE.Vector3(-0.024, -0.066, -0.15), rot: new THREE.Euler(0.68, -0.15, 0, 'YXZ') };
     for (const [t, gp] of [[this.pencil, this.gripPencil], [this.pen, this.gripPen]]) { t.position.copy(gp.pos); t.rotation.copy(gp.rot); }
@@ -482,6 +483,15 @@ export class Hands {
     } else if (p.rot) {
       const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(p.rot[0], p.rot[1], p.rot[2], 'YXZ'));
       wq = F.quat.clone().multiply(q);
+      // a hand placed by its point turns with the arm: as it is set at `home` (a place in its frame,
+      // x and z), and elsewhere turned about the frame's up by `follow` [part, least, most] of as much as
+      // the line from the shoulder to the point has turned from the line to home
+      if (p.tip && p.follow && this.tip && S) {
+        const inv = F.quat.clone().invert(), s = S.clone().sub(F.pos).applyQuaternion(inv), t = this.tip.clone().sub(F.pos).applyQuaternion(inv);
+        const [part, lo, hi] = p.follow;
+        const yaw = Math.max(lo, Math.min(hi, part * wrapPi(Math.atan2(t.x - s.x, t.z - s.z) - Math.atan2(p.home[0] - s.x, p.home[1] - s.z))));
+        wq = F.quat.clone().multiply(new THREE.Quaternion().setFromAxisAngle(_Y, yaw)).multiply(q);
+      }
     } else wq = F.quat.clone();
     let pos;
     if (p.grasp && F.tool) {
@@ -511,9 +521,22 @@ export class Hands {
     this.t += dt;
     if (this.blend < 1) this.blend = Math.min(1, this.blend + dt / this.blendDur);
     const e = this.blend * this.blend * (3 - 2 * this.blend);
+    // the writer leans the way the point goes across the book: the writing arm's shoulder follows the
+    // point's way along the book from `home` by the pose's `lean`, at a steady pace, and comes back after
+    // (the arms are solved from there; the hands are turned as the body's shoulders have them)
+    const body0 = shoulders;
+    shoulders = { ...shoulders };
+    for (const s of ['R', 'L']) {
+      const P = POSES[this.pose][s], B = frames.book, arm = this[s];
+      let goal = 0;
+      if (P.lean && this.tip && B) goal = P.lean * (this.tip.clone().sub(B.pos).applyQuaternion(B.quat.clone().invert()).x - P.home[0]);
+      const r = LEAN_RATE * dt, now = arm.lean ?? 0;
+      arm.lean = now + Math.max(-r, Math.min(r, goal - now));
+      if (arm.lean && B) shoulders[s] = shoulders[s].clone().add(new THREE.Vector3(arm.lean, 0, 0).applyQuaternion(B.quat));
+    }
     const cur = {};
     for (const s of ['R', 'L']) {
-      const now = this.resolve(POSES[this.pose][s], s, frames, shoulders[s], poles[s]);
+      const now = this.resolve(POSES[this.pose][s], s, frames, body0[s], poles[s]);
       let t = now;
       if (this.from && e < 1) {
         const a = this.from[s];
@@ -541,8 +564,8 @@ export class Hands {
     if (this.lastBody && (body.pos.distanceTo(this.lastBody.pos) > 0.5 || body.quat.angleTo(this.lastBody.quat) > 1.0)) {
       this.lastBody = null; this.from = null; this.blend = 1;
       this.spring = { R: null, L: null };
-      for (const a of [this.R, this.L]) { a.pp = null; a.roll = null; a.curl = null; a.lay = null; a.lift = null; }
-      for (const s of ['R', 'L']) cur[s] = this.resolve(POSES[this.pose][s], s, frames, shoulders[s], poles[s]);
+      for (const a of [this.R, this.L]) { a.pp = null; a.roll = null; a.curl = null; a.lay = null; a.lift = null; a.lean = null; }
+      for (const s of ['R', 'L']) cur[s] = this.resolve(POSES[this.pose][s], s, frames, body0[s], poles[s]);
     }
     // What carries each hand's follower. A hand settled in a pose rides with that pose's frame (the
     // book, the lever, the door's ring, the inkwell...), so it stays on what it holds as that moves and
@@ -581,6 +604,12 @@ export class Hands {
     this.contact?.frame();
     for (const s of ['R', 'L']) {
       const arm = this[s], t = cur[s], P = POSES[this.pose][s];
+      // the writing hand turned about its point as the contact solver lays it there (contact.js)
+      if (P.tip && this.tip && this.blend >= 1 && this.contact && GRIPS[this.pose]?.[s]?.anchor) {
+        const g = this.grips[P.hold].pos, at = t.pos.clone().add(g.clone().applyQuaternion(t.quat));
+        t.quat = this.contact.layPoint(s, arm, t.quat, at, g, [P.hold === 'pen' ? 'quill' : 'pencil']);
+        t.pos = at.sub(g.clone().applyQuaternion(t.quat));
+      }
       // the hands move like a careful old man's: steady, no tremor, no bounce. Each wrist follows its
       // target critically damped (it arrives without overshooting). The writing hand, once it is in its
       // pose, puts the point exactly where it's drawing, only never faster than a hand moves (a tap
@@ -788,21 +817,27 @@ export class Hands {
 // A wrist bends back about 55°, forward about 65°, and side to side about 20° toward the thumb and
 // 30° toward the little finger; its own twist is the forearm's business. Anything past that is pulled
 // back inside (q: the hand relative to the end of the forearm).
-const _w = new THREE.Vector3(), _Z = new THREE.Vector3(0, 0, 1), _t = new THREE.Quaternion();
+const _w = new THREE.Vector3(), _Z = new THREE.Vector3(0, 0, 1), _Y = new THREE.Vector3(0, 1, 0), _t = new THREE.Quaternion();
 const _pp = new THREE.Vector3(), _E = new THREE.Vector3(), _fd = new THREE.Vector3(), _n0 = new THREE.Vector3(), _o = new THREE.Vector3();
-const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _e = new THREE.Euler(), _c = new THREE.Vector3();
+const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _e = new THREE.Euler();
 const D2R = Math.PI / 180, A = ANATOMY;
 const clampD = (x, r) => Math.max(r[0] * D2R, Math.min(r[1] * D2R, x));
 const wrapPi = (x) => Math.atan2(Math.sin(x), Math.cos(x));
 // the forearm's turn: no further than the anatomy allows; past 60° it is avoided
 const TURN = ANATOMY.forearm.turn[1] * D2R, EASY_TURN = 60 * D2R;
-// the hand's turn about the forearm (fd) from the hinge-neutral back (n0), for a hand turned wq
+// the hand's turn about the forearm (fd) from the hinge-neutral back (n0), for a hand turned wq: the
+// twist about the forearm of the hand on its neutral end, as clampWrist splits it from the bend (so the
+// forearm carries all of it, and the wrist's share is never cut short)
+const _bx = new THREE.Vector3(), _by = new THREE.Vector3(), _bz = new THREE.Vector3(), _bm = new THREE.Matrix4(), _bq = new THREE.Quaternion();
 function turnOf(n0, fd, wq) {
-  const hd = _w.set(0, 1, 0).applyQuaternion(wq);
-  hd.addScaledVector(fd, -hd.dot(fd));
-  if (hd.lengthSq() < 1e-6) return null;
-  hd.normalize();
-  return Math.atan2(-_c.crossVectors(n0, hd).dot(fd), n0.dot(hd));
+  _bz.copy(fd).negate();
+  _bx.crossVectors(n0, _bz);
+  if (_bx.lengthSq() < 1e-8) return null;
+  _bx.normalize();
+  _by.crossVectors(_bz, _bx);
+  const q = _bq.setFromRotationMatrix(_bm.makeBasis(_bx, _by, _bz)).invert().multiply(wq);
+  if (Math.hypot(q.z, q.w) < 1e-3) return null;
+  return wrapPi(2 * Math.atan2(q.z, q.w));
 }
 const WRIST = { ext: 55 * Math.PI / 180, flex: 65 * Math.PI / 180, radial: 20 * Math.PI / 180, ulnar: 30 * Math.PI / 180 };
 // how far a wrist's bend (q: the hand on the forearm's end) is toward the edge of its range: 0 at its
