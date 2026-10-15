@@ -26,6 +26,8 @@ export const SHARED = {
   uFogHeight: { value: 40.0 },
   uTime: { value: 0 },
   uTurbAmt: { value: 1.0 },
+  uWind: { value: new THREE.Vector2(0.16, 0.07) },   // the wind over the grass (m of lean at a blade's tip)
+  uGrassLod: { value: new THREE.Vector2(9, 30) },    // grass in blades: all of it out to x m, none past y m
 };
 
 export const NOISE_GLSL = /* glsl */`
@@ -69,6 +71,19 @@ in vec4 skin;      // x: mm along a finger (wrinkles run across it), y: knuckle 
 out vec4 vSkin;
 out vec3 vRest;
 #endif
+#ifdef USE_GRASS
+// one tuft (or flower, or stone) per instance; the geometry is a tuft a metre tall, uv.y up its blades
+in vec4 iPos;      // where it stands (world) and which way it is turned
+in vec4 iShape;    // height (m), breadth (m), where the tip's colour starts up the blade, rank (0..1)
+in vec3 iCol;      // its colour at the foot
+in vec3 iTip;      // and at the tip (a flower's head)
+uniform float uTime;
+uniform vec2 uWind, uGrassLod;
+out vec3 vGCol;
+out vec3 vGTip;
+out vec3 vGy;
+${NOISE_GLSL}
+#endif
 void main() {
   #ifdef USE_TINT
     vTint = tint;
@@ -82,6 +97,31 @@ void main() {
   #endif
   vec3 transformed = vec3(position);
   vec3 objectNormal = vec3(normal);
+  #ifdef USE_GRASS
+    // thinned with distance in rank order, broader as it thins so it covers the same, and what is left
+    // sinks into the ground at the far edge, so nothing pops in or out
+    float gd = distance(cameraPosition, iPos.xyz);
+    float keep = mix(1.0, 0.1, smoothstep(uGrassLod.x, uGrassLod.y, gd));
+    float show = smoothstep(keep + 0.002, keep - 0.1, iShape.w) * smoothstep(uGrassLod.y * 1.08, uGrassLod.y * 0.85, gd);
+    float broad = 1.0 + (1.0 - keep) * 1.1;
+    vec3 lp = position * vec3(iShape.y * broad, iShape.x, iShape.y * broad) * show;
+    float cs = cos(iPos.w), sn = sin(iPos.w);
+    lp.xz = vec2(cs * lp.x - sn * lp.z, sn * lp.x + cs * lp.z);
+    // the wind: a steady lean, gusts running across the headland, and each blade's own flutter
+    vec2 gq = iPos.xz * 0.06 - uTime * vec2(0.7, 0.3);
+    float gust = vn3(vec3(gq, 1.0));
+    vec2 w = uWind * (0.4 + 1.6 * gust * gust) + vec2(sin(uTime * 2.6 + iPos.x * 1.7 + iPos.z), cos(uTime * 2.1 + iPos.z * 1.9)) * 0.025;
+    float up = uv.y * uv.y;
+    lp.xz += w * up * min(iShape.x, 0.8) * 2.2 * show;
+    lp.y -= dot(w, w) * up * 3.0 * show;
+    transformed = iPos.xyz + lp;
+    // lit as the ground they stand on is, more or less, not blade by blade
+    vec3 bn = vec3(cs * normal.x - sn * normal.z, 0.0, sn * normal.x + cs * normal.z);
+    objectNormal = normalize(vec3(bn.x * 0.3, 1.0, bn.z * 0.3));
+    vGCol = iCol;
+    vGTip = iTip;
+    vGy = vec3(uv.y, iShape.z, uv.x);
+  #endif
   #include <skinbase_vertex>
   #include <skinnormal_vertex>
   #include <skinning_vertex>
@@ -127,6 +167,19 @@ in vec4 vSkin;
 in vec3 vRest;
 uniform vec3 uWrinkleCol;
 uniform float uWrinkle;
+#endif
+#ifdef USE_GRASS
+in vec3 vGCol;
+in vec3 vGTip;
+in vec3 vGy;
+#endif
+#ifdef UNDER_GRASS
+uniform vec2 uGrassLod;
+uniform vec2 uUnder;       // the reach of the darkening under the blades, as a part of uGrassLod's
+#endif
+#ifdef USE_ROCK
+uniform float uRockAll;    // 1: all of it is stone; 0: only where the surface stands steep
+uniform vec3 uCrackCol;
 #endif
 
 uniform vec3 uColor;
@@ -190,6 +243,18 @@ vec3 floraDab(vec3 base, vec2 p, vec3 col, float pres, float freq, float rad, fl
   }
   return mix(base, col * (0.84 + 0.32 * t1), clamp(k, 0.0, 1.0));
 }
+// on stone the same plants are lichen: crusts spreading in ragged rosettes that run together where it
+// grows thick, mottled through, not dabs
+vec3 lichenCrust(vec3 base, vec3 p, vec3 col, float pres, float freq, float rad, float seed) {
+  if (pres <= 0.002 || rad <= 0.0) return base;
+  vec3 q = p * freq * 0.3 + seed * 7.3;
+  float f = fbm3d(q) * 0.82 + vn3(q * 5.3) * 0.18;
+  float th = mix(0.74, 0.44, pres);
+  float fw = fwidth(f);
+  float k = smoothstep(th - fw, th + fw + 0.015, f);
+  float tone = vn3(q * 7.0 + 2.0);
+  return mix(base, col * (0.78 + 0.4 * tone), k * (0.7 + 0.3 * smoothstep(th, th + 0.08, f)));
+}
 #endif
 #ifdef USE_SKIN
 // fine lines across a coordinate (one per unit), thinned and faded where they would alias
@@ -200,14 +265,28 @@ float skinLines(float ph, float width) {
 }
 #endif
 
+#ifdef USE_ROCK
+// thin lines along a noise's middle contour, faded where they would alias
+float crackLine(float v, float width) {
+  float fw = fwidth(v);
+  return (1.0 - smoothstep(width, width + fw * 1.5, abs(v - 0.5))) * (1.0 - smoothstep(0.08, 0.2, fw));
+}
+#endif
+
 void main() {
   vec3 n = normalize(vNormalW);
+  #ifndef USE_GRASS
   if (!gl_FrontFacing) n = -n;
+  #endif
   vec3 V = normalize(cameraPosition - vWorld);
 
   // pigment: base wash, drifting toward a second colour in slow blooms fixed to the surface
-  float drift = fbm3d(vObj * 0.35 + 5.0);
-  vec3 base = mix(uColor, uColor2, smoothstep(0.35, 0.75, drift));
+  #ifdef USE_GRASS
+    vec3 base = uColor;
+  #else
+    float drift = fbm3d(vObj * 0.35 + 5.0);
+    vec3 base = mix(uColor, uColor2, smoothstep(0.35, 0.75, drift));
+  #endif
   if (uMapAmt > 0.0) {
     vec4 tx = texture(uMap, vUv);
     base = mix(base, base * tx.rgb * 1.08, uMapAmt * tx.a);
@@ -218,17 +297,83 @@ void main() {
     float st = vTint.a * uStain * smoothstep(0.25, 0.65, fbm3d(vObj * 2.2 + 9.0) + vTint.a * 0.4);
     base = mix(base, uStainCol, clamp(st, 0.0, 0.85));
   #endif
+  #ifdef USE_GRASS
+    // dark down among the stems, paler up the blade, then the tip's own colour (a seed head, a flower)
+    base = vGCol * mix(0.5, 1.1, smoothstep(0.0, 0.8, vGy.x));
+    base = mix(base, vGTip, max(smoothstep(vGy.y, vGy.y + 0.12, vGy.x), vGy.z));
+  #endif
+  #ifdef UNDER_GRASS
+    // where the grass stands in blades round the eye, the ground seen between them is the shade down
+    // among the stems, and the flowers are the plants' own; further off the paint stands for both
+    float nearG = 1.0 - smoothstep(uGrassLod.x * uUnder.x, uGrassLod.y * uUnder.y, length(vWorld - cameraPosition));
+    float under = nearG * vTint.a;
+    base = mix(base, base * vec3(0.62, 0.6, 0.5), under);
+    // the flowers stand up in the blades wherever anything grows at all, however thin the grass
+    float grown = nearG * smoothstep(0.02, 0.2, vTint.a);
+    // and down there it is thatch: last year's stems lying every way in streaks, moss in the hollows,
+    // flecks of straw
+    if (under > 0.01) {
+      vec2 gp = vWorld.xz;
+      // two lies of stem, crossing, one or the other in patches
+      vec2 sa = mat2(0.8, 0.6, -0.6, 0.8) * gp, sb = mat2(0.28, -0.96, 0.96, 0.28) * gp;
+      float lie = smoothstep(0.35, 0.65, vn3(vec3(gp * 0.9, 4.0)));
+      float streak = mix(vn3(vec3(sa * vec2(6.0, 24.0), 2.0)), vn3(vec3(sb * vec2(6.0, 24.0), 3.0)), lie) * 0.65 + vn3(vec3(gp * 9.0, 6.0)) * 0.35;
+      float fine = 1.0 - smoothstep(0.2, 0.6, length(fwidth(gp)) * 22.0);
+      float moss = smoothstep(0.45, 0.75, vn3(vec3(gp * 1.6, 9.0)));
+      vec3 thatch = base * mix(0.66, 1.24, streak);
+      thatch = mix(thatch, base * vec3(0.8, 1.02, 0.62), moss * 0.6);
+      thatch = mix(thatch, vec3(0.62, 0.55, 0.36) * dot(base, vec3(0.6)) * 2.2, smoothstep(0.72, 0.86, streak) * (1.0 - moss) * 0.65);
+      base = mix(base, thatch, under * fine);
+    }
+  #endif
   #ifdef USE_FLORA
     // the flowers grow in clumps, thinner between
     vec4 clump = vec4(vn3(vWorld * 0.5 + 3.0), vn3(vWorld * 0.42 + 8.0), vn3(vWorld * 0.7 + 1.0), vn3(vWorld * 0.6 + 5.0));
     vec4 pres = clamp(vFlora * mix(vec4(0.25), vec4(1.6), smoothstep(vec4(0.3), vec4(0.7), clump)), 0.0, 1.0);
+    #ifdef UNDER_GRASS
+      pres *= 1.0 - grown;
+    #endif
     // the lattice lies on the plane the surface faces most nearly
     vec3 an = abs(n);
     vec2 fp = an.y > max(an.x, an.z) ? vWorld.xz : an.x > an.z ? vWorld.zy : vWorld.xy;
-    base = floraDab(base, fp, uFl0, pres.x, uFlFreq.x, uFlSize.x, 1.0);
-    base = floraDab(base, fp, uFl1, pres.y, uFlFreq.y, uFlSize.y, 2.0);
-    base = floraDab(base, fp, uFl2, pres.z, uFlFreq.z, uFlSize.z, 3.0);
-    base = floraDab(base, fp, uFl3, pres.w, uFlFreq.w, uFlSize.w, 4.0);
+    #ifdef USE_ROCK
+    if (uRockAll > 0.5) {
+      base = lichenCrust(base, vWorld, uFl0, pres.x, uFlFreq.x, uFlSize.x, 1.0);
+      base = lichenCrust(base, vWorld, uFl1, pres.y, uFlFreq.y, uFlSize.y, 2.0);
+      base = lichenCrust(base, vWorld, uFl2, pres.z, uFlFreq.z, uFlSize.z, 3.0);
+      base = lichenCrust(base, vWorld, uFl3, pres.w, uFlFreq.w, uFlSize.w, 4.0);
+    } else
+    #endif
+    {
+      base = floraDab(base, fp, uFl0, pres.x, uFlFreq.x, uFlSize.x, 1.0);
+      base = floraDab(base, fp, uFl1, pres.y, uFlFreq.y, uFlSize.y, 2.0);
+      base = floraDab(base, fp, uFl2, pres.z, uFlFreq.z, uFlSize.z, 3.0);
+      base = floraDab(base, fp, uFl3, pres.w, uFlFreq.w, uFlSize.w, 4.0);
+    }
+  #endif
+  #ifdef USE_ROCK
+    // stone: laid in beds that dip a little, each bed its own shade, broken by joints and cracks,
+    // and speckled with its grain; the cracks are drawn in ink as well as shaded
+    float rk = max(uRockAll, smoothstep(0.8, 0.6, n.y));
+    float crack = 0.0;
+    if (rk > 0.0) {
+      vec3 rp = vWorld;
+      float bedY = rp.y * 1.3 + rp.x * 0.12 - rp.z * 0.07 + vn3(rp * 0.3) * 1.6;
+      float bed = floor(bedY);
+      base *= mix(1.0, 0.86 + 0.24 * h31(vec3(bed, 3.0, 7.0)), rk);
+      // the seams between beds, here and there; the joints running down through them, fewer
+      float seam = crackLine(fract(bedY), 0.03) * smoothstep(0.45, 0.7, vn3(rp * 0.4 + 2.0));
+      float joint = crackLine(vn3(vec3(rp.x * 0.6 + rp.z * 0.45, rp.y * 0.12, rp.z * 0.6 - rp.x * 0.45)), 0.014)
+        * smoothstep(0.6, 0.8, vn3(rp * 0.25 + 6.0));
+      crack = max(seam, joint) * rk;
+      vec3 sq = rp * 22.0;
+      float sfw = length(fwidth(sq));
+      float speck = (vn3(sq) - 0.5) * (1.0 - smoothstep(0.4, 1.0, sfw)) + (vn3(sq * 2.7 + 4.0) - 0.5) * 0.6 * (1.0 - smoothstep(0.15, 0.4, sfw));
+      // weathering: mottled darker and paler a hand's breadth across
+      float mott = vn3(rp * 4.0 + 3.0) * 0.6 + vn3(rp * 9.0) * 0.4;
+      base *= (1.0 + speck * 0.5 * rk) * mix(1.0, 0.82 + 0.32 * mott, rk);
+      base = mix(base, base * 0.62, crack);
+    }
   #endif
 
   // light: a wrapped, softly banded value study. Shadow is a cooler, deeper glaze of the same pigment.
@@ -241,7 +386,11 @@ void main() {
   vec3 shade = base * uShadeTint * 0.72;
   vec3 col = mix(shade, base * uLightTint, clamp(lit, 0.0, 1.15));
   // where the light hits square on, the paper is left almost bare
-  col = mix(col, mix(col, vec3(0.96, 0.94, 0.88), 0.5), smoothstep(0.86, 0.97, wrap) * uSunAmt * uLit * uBare);
+  float bare = uBare;
+  #ifdef UNDER_GRASS
+    bare *= 1.0 - under;
+  #endif
+  col = mix(col, mix(col, vec3(0.96, 0.94, 0.88), 0.5), smoothstep(0.86, 0.97, wrap) * uSunAmt * uLit * bare);
 
   // lamp: a warm glaze that pools near the flame
   if (uLampAmt > 0.0) {
@@ -256,7 +405,9 @@ void main() {
     col += uLampCol * rim * uRimAmt * att * 0.35;
   }
 
-  // turbulence: uneven pigment within the wash, on the surface
+  #ifndef USE_GRASS
+  // turbulence: uneven pigment within the wash, on the surface (not in the grass, a thousand blades
+  // deep, where the blades' own colours do it)
   float turb = fbm3d(vObj * 1.3);
   col = density(col, 1.0 + (turb - 0.5) * 0.55 * uTurb * uTurbAmt);
   // blooms: where wet paint ran back into a drying wash it leaves a pale patch with a hard dark rim
@@ -264,6 +415,7 @@ void main() {
   float inBloom = smoothstep(0.6, 0.615, bl);
   float rimB = inBloom - smoothstep(0.615, 0.66, bl);
   col = density(col, 1.0 - inBloom * 0.16 * uTurb + rimB * 0.35 * uTurb);
+  #endif
 
   // grain noise in surface space, faded where it would alias
   vec3 gq = vObj * 18.0;
@@ -280,6 +432,9 @@ void main() {
 
   vec4 ink = vec4(0.0);
   if (uInkAmt > 0.0) { ink = texture(uInkMap, vUv); ink.a *= uInkAmt; }
+  #ifdef USE_ROCK
+    ink = vec4(uCrackCol, crack * 0.3 * (1.0 - fog));
+  #endif
   #ifdef USE_SKIN
     // an old hand's skin, drawn in fine pencil: bunched wrinkles over the knuckles, a crêpe of tiny
     // crossing lines on the backs of the hands, the outline of each nail
@@ -330,6 +485,10 @@ const col3 = (c) => (c instanceof THREE.Color ? c : new THREE.Color(c));
 //                   stain / stainCol set how much ink has gathered and its colour
 //   flora           geometry carries a vec4 'flora' attribute (how thick four flowers grow); flora is
 //                   { cols: [4 colours], freq: [dabs per metre], size: [dab radius, 0..0.5 of a cell] }
+//   grass           drawn as instanced tufts (grass.js): iPos, iShape, iCol, iTip per instance
+//   underGrass      the ground the grass stands on: tint.a is how much grass, darkened under the blades
+//   rock            stone texture (beds, joints, cracks, grain); rock: 1 for all of it, 0.5 for only
+//                   where the surface stands steep
 //   skin            geometry carries a vec4 'skin' attribute (an old hand's wrinkles, crêpe and nails,
 //                   drawn as fine lines in wrinkleCol, scaled by wrinkle)
 export function wash(o = {}) {
@@ -338,7 +497,8 @@ export function wash(o = {}) {
     glslVersion: THREE.GLSL3,
     vertexShader: VERT,
     fragmentShader: FRAG,
-    defines: { ...(o.world ? { WORLD_NOISE: 1 } : {}), ...(o.tint ? { USE_TINT: 1 } : {}), ...(o.skin ? { USE_SKIN: 1 } : {}), ...(o.flora ? { USE_FLORA: 1 } : {}) },
+    defines: { ...(o.world ? { WORLD_NOISE: 1 } : {}), ...(o.tint ? { USE_TINT: 1 } : {}), ...(o.skin ? { USE_SKIN: 1 } : {}), ...(o.flora ? { USE_FLORA: 1 } : {}),
+      ...(o.grass ? { USE_GRASS: 1 } : {}), ...(o.underGrass ? { UNDER_GRASS: 1 } : {}), ...(o.rock ? { USE_ROCK: 1 } : {}) },
     uniforms: {
       ...SHARED,
       uColor: { value: c },
@@ -365,6 +525,9 @@ export function wash(o = {}) {
       uStain: { value: o.stain ?? 0 },
       uWrinkleCol: { value: col3(o.wrinkleCol ?? '#4A3028') },
       uWrinkle: { value: o.wrinkle ?? 1 },
+      uRockAll: { value: o.rock === 1 ? 1 : 0 },
+      uUnder: { value: new THREE.Vector2(...(o.underReach || [1, 1])) },
+      uCrackCol: { value: col3(o.crackCol ?? '#2E2C30') },
       ...(o.flora ? {
         uFl0: { value: col3(o.flora.cols[0]) }, uFl1: { value: col3(o.flora.cols[1]) },
         uFl2: { value: col3(o.flora.cols[2]) }, uFl3: { value: col3(o.flora.cols[3]) },

@@ -26,7 +26,7 @@ const PIG = {
 // the four flowers: gorse (and hawkbit, and lichen on the rock), heather, yarrow, devil's-bit scabious
 export const FLORA = { cols: ['#EBC437', '#9C55A6', '#F4F1E4', '#7D82D3'], freq: [12, 11, 11, 10], size: [0.46, 0.46, 0.42, 0.42] };
 // on stone: orange lichen, moss, pale crust lichen, nothing
-const LICHEN = { cols: ['#D98F37', '#7E8C52', '#DCDFCC', '#000000'], freq: [4.5, 3, 5, 1], size: [0.46, 0.48, 0.44, 0] };
+const LICHEN = { cols: ['#D98F37', '#7E8C52', '#DCDFCC', '#000000'], freq: [11, 6, 13, 1], size: [0.44, 0.48, 0.4, 0] };
 
 const TX = () => TOWER.x / UNIT, TZ = () => TOWER.z / UNIT;
 // the village, the cottages and the school along the north shore: kept, not wild
@@ -48,12 +48,15 @@ function wildness(x, y, L) {
 
 // The ground's pigment (into out.c) and its flowers (out.f, four weights) at a chart point: h its height
 // (m), up the y of its normal, d chart units in from the shore (negative out to sea), L from the lane.
+// With out.turf (a Color) it also says what grows there in blades (grass.js): the turf's own colour,
+// out.grass how thick the grass, out.tall how long (0 grazed short, 1 rank), out.heath and out.bracken.
 export function groundPaint(x, y, h, up, d, L, out) {
   const c = out.c, f = out.f;
   const wild = wildness(x, y, L);
   const { g, h: hh, b } = heathFields(x, y, d);
   // turf: short and bright by the cliff edge, ranker inland
   c.copy(PIG.turf).lerp(PIG.meadow, smooth(1.5, 6, d)).lerp(PIG.rank, smooth(0.4, 0.75, fbm2(x * 0.15, y * 0.15, 5)) * 0.6);
+  if (out.turf) out.turf.copy(c);
   c.lerp(PIG.gorse, g * wild * 0.9).lerp(PIG.heath, hh * wild * 0.85).lerp(PIG.bracken, b * wild * 0.75);
   // rock where the ground falls steeply, laid in beds
   const steep = smooth(0.84, 0.6, up);
@@ -72,6 +75,14 @@ export function groundPaint(x, y, h, up, d, L, out) {
   f[1] = dry * keep * hh * wild * 0.6;
   f[2] = dry * keep * (0.015 + edge * 0.1 + verge * 0.1);
   f[3] = dry * keep * (0.01 + edge * 0.045 + verge * 0.07);
+  if (out.turf) {
+    const grow = smooth(1.2, 2.2, h) * smooth(0.78, 0.86, up) * (1 - 0.85 * smooth(0, 1, (x - 84) * 0.5) * smooth(-4, -3, y) * smooth(7, 6, y));
+    out.grass = grow * (1 - g * wild * 0.55);
+    out.heath = grow * hh * wild;
+    out.bracken = grow * b * wild;
+    // grazed and wind-clipped along the cliff edge and round the tower, rank along the verges and inland
+    out.tall = Math.min(1, 0.15 + 0.5 * smooth(1, 5, d) * wild + verge * 0.4 + 0.3 * smooth(0.45, 0.75, fbm2(x * 0.3, y * 0.3, 8))) * (1 - 0.6 * tame(x, y));
+  }
   return out;
 }
 const _c = new THREE.Color();
@@ -84,8 +95,9 @@ function upAt(x, y) {
 }
 
 // the material the ground and everything growing on it is painted with
-export function groundMaterial({ line = 0.9, crease = 0.3, offset = false } = {}) {
-  const m = wash({ color: '#ffffff', color2: '#F3EFE6', tint: true, flora: FLORA, world: true, noiseScale: 0.05, line, crease, gran: 0.95 });
+// (under: the ground the grass stands on in blades, tint.a how much; rock: stone where it stands steep)
+export function groundMaterial({ line = 0.9, crease = 0.3, offset = false, under = false, underReach, rock = false } = {}) {
+  const m = wash({ color: '#ffffff', color2: '#F3EFE6', tint: true, flora: FLORA, world: true, noiseScale: 0.05, line, crease, gran: 0.95, underGrass: under, underReach, rock: rock ? 0.5 : 0 });
   if (offset) { m.polygonOffset = true; m.polygonOffsetFactor = -2; m.polygonOffsetUnits = -4; }
   return m;
 }
@@ -138,7 +150,7 @@ function lump(B, { p, sx, sy, sz, yaw = 0, tilt = [0, 0], rough = 0.25, seed = 0
     _v.set(x, y, z).applyMatrix4(_m);
     B.pos.push(_v.x, _v.y, _v.z);
     paint(P.getX(i), P.getY(i), P.getZ(i), _v, out);
-    B.tint.push(out.c.r, out.c.g, out.c.b, 0);
+    B.tint.push(out.c.r, out.c.g, out.c.b, out.a || 0);
     B.flora.push(out.f[0], out.f[1], out.f[2], out.f[3]);
   }
   const ix = g.index;
@@ -194,6 +206,8 @@ export function buildFlora(bay, clear = []) {
     for (const [cx, cz, cr] of clear) if (Math.hypot(wx - cx, wz - cz) < cr + rad + 1.2) return false;
     return Math.hypot(wx - TOWER.x, wz - TOWER.z) > 14 + rad;
   };
+  // the bushes, for the sprigs grass.js grows over them near the eye
+  const bushes = group.userData.bushes = [];
   const gorseCol = col('#4B5F2E'), gorseDark = col('#34452A'), heathCol = col('#5E5A42'), heathDark = col('#3E3F33');
   const stone = col('#B3AFA6'), stone2 = col('#8E8A84');
 
@@ -220,11 +234,13 @@ export function buildFlora(bay, clear = []) {
           if (!free(px, pz, s)) continue;
           const gy = Math.min(bay.groundAt(px - s, pz), bay.groundAt(px + s, pz), bay.groundAt(px, pz - s), bay.groundAt(px, pz + s));
           const shade = 0.85 + r() * 0.3, seed = r() * 50;
+          const sx = s * (1 + r() * 0.4), sz = s * (1 + r() * 0.4), yaw = r() * 6.3;
+          bushes.push({ kind: 'gorse', x: px, y: gy - 0.12 * ht, z: pz, sx, sy: ht, sz, yaw, shade });
           lump(chunk(cx, cy, 'g'), {
-            p: _p.set(px, gy - 0.12 * ht, pz), sx: s * (1 + r() * 0.4), sy: ht, sz: s * (1 + r() * 0.4), yaw: r() * 6.3, rough: 0.22, seed,
+            p: _p.set(px, gy - 0.12 * ht, pz), sx, sy: ht, sz, yaw, rough: 0.22, seed,
             paint: (ux, uy, uz, w, o) => {
               o.c.copy(gorseDark).lerp(gorseCol, smooth(0, 0.5, uy)).multiplyScalar(shade);
-              o.f[0] = 0.85 * smooth(-0.45, 0.35, uy); o.f[1] = 0; o.f[2] = 0; o.f[3] = 0;
+              o.f[0] = 0.85 * smooth(-0.45, 0.35, uy); o.f[1] = 0; o.f[2] = 0; o.f[3] = 0; o.a = 1;
             },
           });
         }
@@ -238,11 +254,13 @@ export function buildFlora(bay, clear = []) {
           if (!free(px, pz, s)) continue;
           const gy = Math.min(bay.groundAt(px - s, pz), bay.groundAt(px + s, pz), bay.groundAt(px, pz - s), bay.groundAt(px, pz + s));
           const shade = 0.85 + r() * 0.3, seed = r() * 50;
+          const sx = s * (1 + r() * 0.4), sy = s * (0.45 + r() * 0.3), yaw = r() * 6.3;
+          bushes.push({ kind: 'heath', x: px, y: gy - 0.1, z: pz, sx, sy, sz: s, yaw, shade });
           lump(chunk(cx, cy, 'g'), {
-            p: _p.set(px, gy - 0.1, pz), sx: s * (1 + r() * 0.4), sy: s * (0.45 + r() * 0.3), sz: s, yaw: r() * 6.3, rough: 0.38, seed, low: true,
+            p: _p.set(px, gy - 0.1, pz), sx, sy, sz: s, yaw, rough: 0.38, seed, low: true,
             paint: (ux, uy, uz, w, o) => {
               o.c.copy(heathDark).lerp(heathCol, smooth(0, 0.6, uy)).multiplyScalar(shade);
-              o.f[0] = 0; o.f[1] = smooth(-0.2, 0.4, uy); o.f[2] = 0; o.f[3] = 0;
+              o.f[0] = 0; o.f[1] = smooth(-0.2, 0.4, uy); o.f[2] = 0; o.f[3] = 0; o.a = 1;
             },
           });
         }
@@ -297,20 +315,60 @@ export function buildFlora(bay, clear = []) {
       }
     }
   }
-  const plants = groundMaterial({ line: 0.35, crease: 0.3 });
-  const rock = wash({ color: '#ffffff', color2: '#F0EEEA', tint: true, flora: LICHEN, world: true, noiseScale: 0.2, line: 0.8, crease: 0.5, gran: 1 });
+  // (near the eye the bushes are grown over with shoots, grass.js, and the dome is the shade inside them)
+  // (the shoots thin with distance faster than the dome's own flowers should go, so only close by)
+  const plants = groundMaterial({ line: 0.35, crease: 0.3, under: true, underReach: [0.55, 0.5] });
+  const rock = wash({ color: '#ffffff', color2: '#F0EEEA', tint: true, flora: LICHEN, world: true, noiseScale: 0.2, line: 0.8, crease: 0.5, gran: 1, rock: 1 });
   for (const [key, { kind, B }] of chunks) if (B.count) group.add(B.mesh(kind === 's' ? rock : plants, 'flora-' + key));
   group.matrixAutoUpdate = false;
   return group;
 }
 const _p = new THREE.Vector3();
 
-function insideLand(x, y) { return pointInPoly(x, y, LAND.north) || pointInPoly(x, y, LAND.south); }
+export function insideLand(x, y) { return pointInPoly(x, y, LAND.north) || pointInPoly(x, y, LAND.south); }
+
+// How worn the ground is at world x, z by the paths laid with ribbon(): 0 the verge's own ground, 1 bare
+// earth; crown where it is the boreen's grass strip. The ribbons' middle lines, binned by WC m cells.
+const WORN = new Map(), WC = 4;
+function wornAdd(a, b, wide, prof) {
+  const seg = [a.x, a.z, b.x, b.z, wide, prof], m = prof.across[prof.across.length - 1] * wide + 0.5;
+  for (let i = Math.floor((Math.min(a.x, b.x) - m) / WC); i <= Math.floor((Math.max(a.x, b.x) + m) / WC); i++) {
+    for (let j = Math.floor((Math.min(a.z, b.z) - m) / WC); j <= Math.floor((Math.max(a.z, b.z) + m) / WC); j++) {
+      const k = i + ',' + j;
+      if (!WORN.has(k)) WORN.set(k, []);
+      WORN.get(k).push(seg);
+    }
+  }
+}
+export function pathWear(wx, wz, out = {}) {
+  out.wear = 0; out.crown = false;
+  const list = WORN.get(Math.floor(wx / WC) + ',' + Math.floor(wz / WC));
+  if (!list) return out;
+  let best = Infinity, bs = null;
+  for (const s of list) {
+    const [ax, az, bx, bz, wide] = s;
+    const dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz || 1;
+    const t = Math.max(0, Math.min(1, ((wx - ax) * dx + (wz - az) * dz) / l2));
+    const o = Math.hypot(wx - ax - dx * t, wz - az - dz * t) / wide;
+    if (o < best) { best = o; bs = s; }
+  }
+  const { across, wear, crown } = bs[5];
+  if (best >= across[across.length - 1]) return out;
+  let k = 0;
+  while (k < across.length - 1 && across[k + 1] < best) k++;
+  const u = best <= across[0] ? 0 : (best - across[k]) / (across[k + 1] - across[k]);
+  out.wear = best <= across[0] ? wear[0] : wear[k] + (wear[k + 1] - wear[k]) * u;
+  out.crown = best < crown;
+  return out;
+}
 
 // ---------------- the boreen and the footpaths ----------------
 // a ribbon laid on the ground along a smoothed line: across[] are offsets (m) and wear[] how worn each
 // strip is (0 the verge's own ground, 1 bare earth); crown marks the grass strip down the middle
 function ribbon(bay, B, pts, across, wear, crown, seed) {
+  // the worn profile from the middle out (the ribbon is the same either side), for pathWear
+  const half = across.map((a, j) => [a, wear[j]]).filter(([a]) => a >= 0);
+  const prof = { across: half.map((h) => h[0]), wear: half.map((h) => h[1]), crown: crown.some((c) => c) ? Math.max(...across) * 0.16 : 0 };
   const curve = new THREE.CatmullRomCurve3(pts.map(([x, y]) => new THREE.Vector3(x * UNIT, 0, y * UNIT)), false, 'centripetal');
   const n = Math.max(2, Math.round(curve.getLength() / 1.1));
   const P = curve.getSpacedPoints(n);
@@ -323,6 +381,7 @@ function ribbon(bay, B, pts, across, wear, crown, seed) {
     tx /= tl; tz /= tl;
     const along = i * 1.1;
     const wide = 0.88 + 0.28 * noise1(along * 0.05, seed);
+    if (i < n) wornAdd(P[i], P[i + 1], wide, prof);
     for (let j = 0; j < W; j++) {
       const o = across[j] * wide + (j === 0 || j === W - 1 ? (noise1(along * 0.4 + j * 9, seed + 1) - 0.5) * 0.5 : 0);
       const wx = P[i].x - tz * o, wz = P[i].z + tx * o;
@@ -337,7 +396,7 @@ function ribbon(bay, B, pts, across, wear, crown, seed) {
       if (crown[j]) out.c.lerp(PIG.crown, 0.7);
       out.c.lerp(earth, Math.min(1, w));
       const keep = 1 - Math.min(1, w);
-      B.tint.push(out.c.r, out.c.g, out.c.b, 0);
+      B.tint.push(out.c.r, out.c.g, out.c.b, crown[j] ? 0.7 : keep * keep);
       B.flora.push(out.f[0] * keep, out.f[1] * keep * 0.3, (out.f[2] + crown[j] * 0.12) * keep, out.f[3] * keep);
     }
   }
@@ -356,7 +415,7 @@ export function buildPaths(bay) {
   ribbon(bay, B, LANE, [-1.55, -1.1, -0.8, -0.4, -0.18, 0.18, 0.4, 0.8, 1.1, 1.55], [0, 0.55, 1, 0.85, 0.1, 0.1, 0.85, 1, 0.55, 0], [0, 0, 0, 0, 1, 1, 0, 0, 0, 0], 3);
   // the footpaths to the places off the lane
   for (const s of Object.values(SPURS)) ribbon(bay, B, s.pts, [-0.85, -0.42, 0, 0.42, 0.85], [0, 0.7, 1, 0.7, 0], [0, 0, 0, 0, 0], 7);
-  const g = B.mesh(groundMaterial({ line: 0, crease: 0.15, offset: true }), 'paths');
+  const g = B.mesh(groundMaterial({ line: 0, crease: 0.15, offset: true, under: true }), 'paths');
   g.geometry.computeVertexNormals();
   return g;
 }

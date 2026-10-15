@@ -41,7 +41,7 @@ export class Headland {
       return { P, id: P.id, c, r: P.trigger.r, inside: false };
     });
     // the gorse, the heather and the boulders grow everywhere but the houses, the places and their doors
-    this.bay.addFlora([...this.solids, ...this.places.map((pl) => [pl.c.x, pl.c.z, pl.r])]);
+    this.bay.addFlora([...this.solids, ...this.places.map((pl) => [pl.c.x, pl.c.z, pl.r])], [[TOWER.x, TOWER.z, TOWER_R + 1.3], ...this.solids]);
     this.group.visible = false;
     this.hour = DAY.from;
     this.pace = 1;

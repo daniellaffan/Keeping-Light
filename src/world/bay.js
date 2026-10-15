@@ -14,6 +14,7 @@ import { Builder } from './build.js';
 import { LAMP_HEIGHT } from './tower.js';
 import { rng, noise1, fbm1, fbm2, makeCanvas, smooth } from '../render/paint.js';
 import { groundPaint, groundMaterial, buildFlora, buildPaths, buildShore } from './flora.js';
+import { Meadow } from './grass.js';
 
 // sea level for each tide (m), and the height of each kind of reef's top
 export const TIDE = { high: 1.0, mid: 0, low: -1.0 };
@@ -115,18 +116,19 @@ function terrain() {
   // shingle along the shore (flora.js)
   const n = g.attributes.normal;
   const flora = new Float32Array(nx * ny * 4);
-  const out = { c: new THREE.Color(), f: [0, 0, 0, 0] };
+  const out = { c: new THREE.Color(), f: [0, 0, 0, 0], turf: new THREE.Color() };
   for (let k = 0; k < nx * ny; k++) {
     const x = pos[k * 3] / UNIT, y = pos[k * 3 + 2] / UNIT, h = hs[k];
     const d = pointInPoly(x, y, LAND.north) || pointInPoly(x, y, LAND.south) ? shoreDist(x, y) : -shoreDist(x, y);
     groundPaint(x, y, h, n.getY(k), d, laneDist(x, y), out);
     const c = out.c;
-    tint[k * 4] = c.r; tint[k * 4 + 1] = c.g; tint[k * 4 + 2] = c.b; tint[k * 4 + 3] = 0;
+    // a: how much grows there in blades near the eye (grass.js), which the ground is darkened under
+    tint[k * 4] = c.r; tint[k * 4 + 1] = c.g; tint[k * 4 + 2] = c.b; tint[k * 4 + 3] = Math.min(1, out.grass + out.heath * 0.5);
     flora.set(out.f, k * 4);
   }
   g.setAttribute('tint', new THREE.BufferAttribute(tint, 4));
   g.setAttribute('flora', new THREE.BufferAttribute(flora, 4));
-  const mat = groundMaterial();
+  const mat = groundMaterial({ under: true, rock: true });
   const m = new THREE.Mesh(g, mat);
   m.matrixAutoUpdate = false;
   m.userData.grid = { ...GRID, nx, ny, hs };
@@ -363,7 +365,7 @@ export class Bay {
     group.add(this.shore);
 
     // stacks
-    const rockM = wash({ color: '#928C83', color2: '#77716A', line: 1, crease: 0.6, gran: 1, world: true, noiseScale: 0.12 });
+    const rockM = wash({ color: '#928C83', color2: '#77716A', line: 1, crease: 0.6, gran: 1, world: true, noiseScale: 0.12, rock: 1 });
     const sb = new Builder(5);
     for (const s of STACKS) {
       const H = s.h * 10;
@@ -374,7 +376,7 @@ export class Bay {
     // reefs: a mound and a scatter of rocks, a ring of broken water while they stand above it, and a
     // paler patch over them while they're covered
     this.reefs = {};
-    const reefM = wash({ color: '#6A5F58', color2: '#4F5A44', line: 1, crease: 0.6, gran: 1, world: true, noiseScale: 0.2 });
+    const reefM = wash({ color: '#6A5F58', color2: '#4F5A44', line: 1, crease: 0.6, gran: 1, world: true, noiseScale: 0.2, rock: 1 });
     this.foamM = wash({ color: '#EEF0EC', color2: '#DDE3E2', water: 1, line: 0, crease: 0, gran: 0.4, lit: 0.45, world: true, noiseScale: 0.3 });
     this.shallowM = wash({ color: '#6F86A2', color2: '#7C92A8', water: 1, line: 0.05, crease: 0, gran: 0.5, lit: 0.3, world: true, noiseScale: 0.05 });
     for (const [id, R] of Object.entries(REEFS)) {
@@ -420,11 +422,15 @@ export class Bay {
   }
 
   // the gorse, the heather and the boulders, kept off clear: circles [x, z, r] in world metres (the
-  // houses and the places, which are built after the bay)
-  addFlora(clear) {
+  // houses and the places, which are built after the bay); and the grass in blades round the eye, kept
+  // off bare (the tower and its apron, the houses)
+  addFlora(clear, bare = clear) {
     if (this.flora) this.flora.removeFromParent();
     this.flora = buildFlora(this, clear);
     this.group.add(this.flora);
+    if (this.meadow) this.meadow.group.removeFromParent();
+    this.meadow = new Meadow(this, bare);
+    this.group.add(this.meadow.group);
   }
 
   // the height of the ground mesh itself (not the function it was sampled from) at world x, z
@@ -757,6 +763,7 @@ export class Bay {
   update(dt, camera, st) {
     const camPos = camera.getWorldPosition(this.camPos);
     const q = camera.getWorldQuaternion(new THREE.Quaternion());
+    if (this.meadow) this.meadow.update(camPos);
     for (const b of this.billboards) {
       if (!b.parent) continue;
       b.parent.updateWorldMatrix(true, false);
