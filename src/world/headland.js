@@ -49,7 +49,7 @@ export class Headland {
 
   // ---------------- where you can stand ----------------
   ground(x, z) {
-    return this.insideTower(x, z) ? TOWER.y : Math.max(this.bay.groundAt(x, z), this.bay.tide + 0.3);
+    return this.insideTower(x, z) ? this.k.roomFloor(x, z) : Math.max(this.bay.groundAt(x, z), this.bay.tide + 0.3);
   }
 
   insideTower(x, z) { return Math.hypot(x - TOWER.x, z - TOWER.z) < TOWER_R - 0.05; }

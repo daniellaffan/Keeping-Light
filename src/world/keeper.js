@@ -37,6 +37,8 @@ const FAIL_DUR = 7;
 // treads climbed in the finale: by the eighth the head is in the hatch, the lamp room's light above
 // (any higher and it would come up through the empty space under the gallery floor)
 const CLIMB = 8;
+// walking in the watch room, the treads you can go up before your head is at the ceiling
+const WALK_TREADS = 7;
 
 const hasReef = (n) => (n.anomalies || []).some((a) => a.type === 'newReef');
 
@@ -443,11 +445,32 @@ export class Keeper {
       }
     }
     let r = Math.hypot(l.x, l.z);
-    const a = ((Math.atan2(l.x, -l.z) / DEG) + 360) % 360;
-    const st = O.stairs;
-    if (a > st.from && a < st.to && r > st.r0) { l.x *= st.r0 / r; l.z *= st.r0 / r; r = st.r0; }
+    let a = ((Math.atan2(l.x, -l.z) / DEG) + 360) % 360;
+    const st = O.stairs, S = ROOM.stairs;
+    if (a > st.from && a < st.to && r > st.r0) {
+      // The stairs: stepped onto at the foot, by the bottom tread, and climbed between the rail and
+      // the wall as far as the tread where the head would meet the ceiling (the finale climbs on up
+      // through the hatch). Anywhere else the flight is a wall, as it is to someone on the floor
+      // beneath it.
+      const foot = S.from + S.step * 0.5, top = S.from + S.step * (WALK_TREADS - 1 + 0.4);
+      const up = p.y > TOWER.y + 0.1;
+      if (a >= foot && up) {
+        const rr = Math.max(r, S.r0 + 0.25), aa = Math.min(a, top) * DEG;
+        l.x = Math.sin(aa) * rr; l.z = -Math.cos(aa) * rr; r = rr;
+      } else if (a >= foot) { l.x *= st.r0 / r; l.z *= st.r0 / r; r = st.r0; }
+    }
     if (r > O.radius) { l.x *= O.radius / r; l.z *= O.radius / r; }
     p.copy(l.applyMatrix4(this.room.group.matrixWorld));
+  }
+
+  // the floor underfoot in the watch room (world y): the boards, or the tread you stand on
+  roomFloor(x, z) {
+    const l = new THREE.Vector3(x, 0, z).applyMatrix4(this.roomInv);
+    const st = this.room.obstacles.stairs, S = ROOM.stairs;
+    const a = ((Math.atan2(l.x, -l.z) / DEG) + 360) % 360;
+    if (a <= st.from || a >= st.to || Math.hypot(l.x, l.z) <= S.r0) return TOWER.y;
+    const i = clamp(Math.round((a - S.from) / S.step), 0, S.count - 1);
+    return TOWER.y + (i + 1) * S.rise + 0.03;
   }
 
   // ---------------- the day ----------------
@@ -894,7 +917,7 @@ export class Keeper {
         break;
       case 'walk': {
         if (this.mode === 'day') { this.updateDay(dt); break; }
-        this.walker.update(dt, { collide: (p) => this.collideRoom(p) });
+        this.walker.update(dt, { collide: (p) => this.collideRoom(p), ground: (x, z) => this.roomFloor(x, z) });
         const ep = this.walker.eyePose();
         this.cam.pos.copy(ep.pos); this.cam.yaw = ep.yaw; this.cam.pitch = ep.pitch; this.cam.roll = ep.roll;
         this.cam.fov += (62 - this.cam.fov) * Math.min(1, dt * 4);

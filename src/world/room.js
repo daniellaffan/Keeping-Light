@@ -66,6 +66,9 @@ export function buildRoom() {
   const cg = new THREE.ShapeGeometry(ceil, 48);
   planarUv(cg, 0.8, true);
   b.add(cg, M.ceil, { pos: [0, H, 0], rot: [Math.PI / 2, 0, 0], wonk: 0 });
+  // the stairwell's wall above the hatch, up to the floor of the room above, so a look up through it
+  // finds plaster and not the sky between the ceiling and that floor
+  wallArc(b, M.plaster, holeA0 - 4, holeA1 + 4, H - 0.02, H + 0.62);
   // beams
   for (const x of [-1.2, 1.25]) b.box(M.oak, 0.16, 0.2, 2 * Math.sqrt(R * R - x * x), [x, H - 0.1, 0], { uvScale: 1 });
 
@@ -132,9 +135,11 @@ export function buildRoom() {
     const rm = (st.r0 + R) / 2;
     const [tx, tz] = polar(a, rm);
     b.add(new THREE.BoxGeometry(0.34, 0.06, R - st.r0 + 0.05), M.oak, { pos: [tx, y, tz], rot: [0, facing(a), 0], wonk: 1.4, tag: 'stairs' });
-    // riser below each tread, set back
-    const [rx, rz] = polar(a - st.step * 0.42, rm);
-    b.add(new THREE.BoxGeometry(0.03, st.rise - 0.06, R - st.r0), M.oak, { pos: [rx, y - st.rise / 2, rz], rot: [0, facing(a - st.step * 0.42) + Math.PI / 2, 0], scale: [1, 1, 1], tag: 'stairs' });
+    // riser below each tread, set back a little from its leading edge; like the tread it runs out
+    // from the rail to the wall (its long side radial), thin across the way you climb
+    const ra = a - (0.17 - 0.04) / rm / DEG;
+    const [rx, rz] = polar(ra, rm);
+    b.add(new THREE.BoxGeometry(0.03, st.rise - 0.06, R - st.r0), M.oak, { pos: [rx, y - st.rise / 2, rz], rot: [0, facing(ra), 0], tag: 'stairs' });
     // baluster at the inner end
     const [bx, bz] = polar(a, st.r0 + 0.05);
     b.cyl(M.iron, 0.012, 0.012, 0.9, [bx, y + 0.45, bz], { seg: 6, tag: 'rail' });
