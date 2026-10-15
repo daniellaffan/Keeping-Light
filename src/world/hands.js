@@ -326,10 +326,10 @@ export const POSES = {
       fingers: { index: [0.01, 0.542, 0.449, -0.084], middle: [0.883, 0.636, 0.487, -0.243], ring: [0, 1.31, 1.48, 0.75], little: [0.3, 1.57, 1.74, 0.88] }, thumb: [0.561, -0.398, 0.324, -0.023, -0.489] }),
     L: hand(FLAT, { frame: 'book', pos: [-0.412, 0.019, 0.127], rot: [0.37, 0.17, -0.03] }),
   },
-  // the dip pen: held a little more upright, the same left hand
+  // the quill: held as the pencil is (the point out past the fingers), the same left hand
   pen: {
-    R: hand(TRIPOD, { frame: 'book', tip: true, hold: 'pen', rot: [0.02, 0.38, -0.5],
-      fingers: { index: [0, 0.48, 0.52, 0.06], middle: [-0.05, 0.5, 0.76, -0.14] }, thumb: [0.46, -0.42, 0.8, 0.05, -0.6] }),
+    R: hand(TRIPOD, { frame: 'book', tip: true, hold: 'pen', rot: [-0.0985, 0.5169, -0.5099], home: [0.144, 0], follow: [0.6009, -0.1093, 0.1041], lean: 0.8,
+      fingers: { index: [0.01, 0.542, 0.449, -0.084], middle: [0.883, 0.636, 0.487, -0.243], ring: [0, 1.31, 1.48, 0.75], little: [0.3, 1.57, 1.74, 0.88] }, thumb: [0.561, -0.398, 0.324, -0.023, -0.489] }),
     L: hand(FLAT, { frame: 'book', pos: [-0.412, 0.019, 0.127], rot: [0.37, 0.17, -0.03] }),
   },
   // turning a page: the right hand's fingers slip under the near corner and lift it; the leaf goes over
@@ -383,12 +383,12 @@ export const POSES = {
   // fingers on the quill where it stands in the well; and the quill drawn up out of it
   'ink-take': {
     R: hand(TRIPOD, { frame: 'quillWell', grasp: 'pen', hold: 'pen',
-      fingers: { index: [0, 0.48, 0.52, 0.06], middle: [-0.05, 0.5, 0.76, -0.14] }, thumb: [0.46, -0.42, 0.8, 0.05, -0.6] }),
+      fingers: { index: [0.01, 0.542, 0.449, -0.084], middle: [0.883, 0.636, 0.487, -0.243] }, thumb: [0.561, -0.398, 0.324, -0.023, -0.489] }),
     L: hand(FLAT, { frame: 'book', pos: [-0.412, 0.019, 0.127], rot: [0.37, 0.17, -0.03] }),
   },
   'ink-lift': {
     R: hand(TRIPOD, { frame: 'quillUp', grasp: 'pen', hold: 'pen',
-      fingers: { index: [0, 0.48, 0.52, 0.06], middle: [-0.05, 0.5, 0.76, -0.14] }, thumb: [0.46, -0.42, 0.8, 0.05, -0.6] }),
+      fingers: { index: [0.01, 0.542, 0.449, -0.084], middle: [0.883, 0.636, 0.487, -0.243] }, thumb: [0.561, -0.398, 0.324, -0.023, -0.489] }),
     L: hand(FLAT, { frame: 'book', pos: [-0.412, 0.019, 0.127], rot: [0.37, 0.17, -0.03] }),
   },
   // debug only (the hands review's studio): held up before the face, fingers at ease
@@ -426,8 +426,8 @@ export class Hands {
     // where each tool sits in the right wrist's frame for the tripod grip: shaft back over the
     // web of the thumb, tip out past the index pad, the pencil about 48° up from the page as it writes
     this.gripPencil = { pos: new THREE.Vector3(-0.0222, -0.0752, -0.1489), rot: new THREE.Euler(0.6912, -0.1553, 0.1239, 'YXZ') };
-    // the quill a touch more upright, its feather back over the hand
-    this.gripPen = { pos: new THREE.Vector3(-0.024, -0.066, -0.15), rot: new THREE.Euler(0.68, -0.15, 0, 'YXZ') };
+    // the quill the same, its feather back over the hand (its barrel is thinner than the pencil)
+    this.gripPen = { pos: this.gripPencil.pos.clone(), rot: this.gripPencil.rot.clone() };
     for (const [t, gp] of [[this.pencil, this.gripPencil], [this.pen, this.gripPen]]) { t.position.copy(gp.pos); t.rotation.copy(gp.rot); }
     this.grips = { pencil: this.gripPencil, pen: this.gripPen };
 

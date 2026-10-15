@@ -119,7 +119,7 @@ export const CONTACTS = CONTACTS_;
 //            'fixed' leaves it as posed. The thumb likewise.
 // A hand with no grip here is kept out of things, its fingers free.
 const RESTING = { anchor: 'heel', fingers: { all: 'touch', thumb: 'touch' } };
-// the pencil held (ready, or writing: the hand placed by the point), the hand resting on its
+// the pencil or the quill held (ready, or writing: the hand placed by the point), the hand resting on its
 // little-finger edge: the thumb, index and middle finger as posed with their pads on the shaft
 // (hands.js), the ring and little fingers kept out of things (but the tool they hold)
 const HOLDING = { anchor: 'ulnar', fingers: { all: 'free', thumb: 'fixed', index: 'fixed', middle: 'fixed' } };
@@ -128,7 +128,7 @@ const HOLDING = { anchor: 'ulnar', fingers: { all: 'free', thumb: 'fixed', index
 const GRASP = (on, thumb) => ({ grasp: [on], fingers: { all: 'touch', thumb: thumb ? 'touch' : 'free' } });
 export const GRIPS = {
   lean: { R: RESTING, L: RESTING },
-  ready: { R: HOLDING, L: RESTING }, write: { R: HOLDING, L: RESTING }, pen: { L: RESTING }, turn: { L: RESTING }, close: { R: RESTING },
+  ready: { R: HOLDING, L: RESTING }, write: { R: HOLDING, L: RESTING }, pen: { R: HOLDING, L: RESTING }, turn: { L: RESTING }, close: { R: RESTING },
   mug: { R: GRASP('mug'), L: GRASP('mug') }, lamp: { R: GRASP('lever', true) }, rail: { R: GRASP('rail') },
   'ink-tray': { L: RESTING }, 'ink-well': { R: GRASP('inkwell', true), L: RESTING }, 'ink-take': { L: RESTING }, 'ink-lift': { L: RESTING },
 };
