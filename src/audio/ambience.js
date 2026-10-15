@@ -84,6 +84,13 @@ export class Ambience {
     this.wallsG.gain.setTargetAtTime(walls ? 0.6 : 1, t, 0.35);
   }
 
+  // up the tower the wind has nothing in its way: 0 on the ground, 1 out on the gallery
+  aloft(k) {
+    if (k === (this.aloftK || 0)) return;
+    this.aloftK = k;
+    this.nextGust = 0;
+  }
+
   hush(on) {
     this.out.gain.setTargetAtTime(on ? 0.25 : 1, this.ctx.currentTime, on ? 1 : 2.5);
   }
@@ -106,7 +113,8 @@ export class Ambience {
     // wind gusts
     if (t > this.nextGust) {
       const len = 3 + Math.random() * 6;
-      this.windG.gain.setTargetAtTime(c.wind * (0.02 + Math.random() * 0.05), t, len / 3);
+      const up = this.aloftK || 0, wind = Math.max(c.wind, up * 0.9) * (1 + up);
+      this.windG.gain.setTargetAtTime(wind * (0.02 + Math.random() * 0.05), t, len / 3);
       this.windBP.frequency.setTargetAtTime(350 + Math.random() * 600, t, len / 2);
       this.nextGust = t + len;
     }

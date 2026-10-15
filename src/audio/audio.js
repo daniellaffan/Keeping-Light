@@ -132,4 +132,7 @@ class AudioEngine {
   heldNote() { if (this.started) this.sfx.heldNote(); }
   footstep(surface, v) { if (this.started) this.sfx.footstep(surface, v); }
   door() { if (this.started) this.sfx.door(); }
+  ratchet() { if (this.started) this.sfx.ratchet(); }
+  // up the tower: 0 on the ground, more wind the higher and the more open (1 out on the gallery)
+  aloft(k) { if (this.started) this.amb.aloft(k); }
 }

@@ -6,6 +6,7 @@
 // climbed here too, before the 2D last sunset takes over.
 import * as THREE from 'three';
 import { buildRoom, ROOM } from './room.js';
+import { TOP } from './tower.js';
 import { Book } from './book.js';
 import { Walker } from './walker.js';
 import { Hands, POSES, POSE_NAMES } from './hands.js';
@@ -19,7 +20,7 @@ import { palette } from '../render/scenes/bay-paint.js';
 import { fogColorFor } from '../render/scenes/bay.js';
 import { letter, measure, block } from '../render/hand.js';
 import { ARRIVAL, VIGNETTES, QUIET, PLACES } from '../data/story-village.js';
-import { STAIRS } from '../data/story-end.js';
+import { STAIRS, LANTERN } from '../data/story-end.js';
 import { blob, rgba, smooth, clamp, lerp, inkLine, rng } from '../render/paint.js';
 
 const DEG = Math.PI / 180;
@@ -39,6 +40,10 @@ const FAIL_DUR = 7;
 const CLIMB = 8;
 // walking in the watch room, the treads you can go up before your head is at the ceiling
 const WALK_TREADS = 7;
+// the climb on up the tower to the lantern, through the paper: fade out, a breath, fade in
+const HOP = { out: 0.7, hold: 0.7, in: 1.1 };
+// the clockwork, once wound: how long the lens turns (s) and how fast (rad/s, a turn in twenty seconds)
+const LENS_RUN = 90, LENS_RATE = Math.PI * 2 / 20;
 
 const hasReef = (n) => (n.anomalies || []).some((a) => a.type === 'newReef');
 
@@ -188,6 +193,9 @@ export class Keeper {
     const g = this.game;
     this.night = g.night;
     this.t = 0;
+    // every phase begins on the ground
+    this.up = false; this.hop = null; this.scope = null; this.wind = null; this.caption = null;
+    this.walker.hold = false; this.hands.visible = true;
     if (name === 'daymap') { this.startDay(false); return; }
     if (name === 'vignette') { this.enterPlace(args.place); return; }
     if (name === 'finale') { this.enterStairs(); return; }
@@ -428,6 +436,11 @@ export class Keeper {
   // ---------------- walking in the room ----------------
   collideRoom(p) {
     const l = p.clone().applyMatrix4(this.roomInv);
+    if (this.up) {
+      this.collideTop(l, p.y - TOWER.y);
+      p.copy(l.applyMatrix4(this.room.group.matrixWorld));
+      return;
+    }
     const O = this.room.obstacles;
     for (const [cx, cz, r] of O.circles) {
       const dx = l.x - cx, dz = l.z - cz, d = Math.hypot(dx, dz);
@@ -449,12 +462,14 @@ export class Keeper {
     const st = O.stairs, S = ROOM.stairs;
     if (a > st.from && a < st.to && r > st.r0) {
       // The stairs: stepped onto at the foot, by the bottom tread, and climbed between the rail and
-      // the wall as far as the tread where the head would meet the ceiling (the finale climbs on up
-      // through the hatch). Anywhere else the flight is a wall, as it is to someone on the floor
+      // the wall as far as the tread where the head would meet the ceiling, and on from there up the
+      // tower to the lantern. Anywhere else the flight is a wall, as it is to someone on the floor
       // beneath it.
       const foot = S.from + S.step * 0.5, top = S.from + S.step * (WALK_TREADS - 1 + 0.4);
       const up = p.y > TOWER.y + 0.1;
       if (a >= foot && up) {
+        // on past the last tread you can stand on: on up the tower to the lamp
+        if (a > top) this.hopTo('top');
         const rr = Math.max(r, S.r0 + 0.25), aa = Math.min(a, top) * DEG;
         l.x = Math.sin(aa) * rr; l.z = -Math.cos(aa) * rr; r = rr;
       } else if (a >= foot) { l.x *= st.r0 / r; l.z *= st.r0 / r; r = st.r0; }
@@ -466,11 +481,220 @@ export class Keeper {
   // the floor underfoot in the watch room (world y): the boards, or the tread you stand on
   roomFloor(x, z) {
     const l = new THREE.Vector3(x, 0, z).applyMatrix4(this.roomInv);
+    if (this.up) return TOWER.y + this.topFloor(l);
     const st = this.room.obstacles.stairs, S = ROOM.stairs;
     const a = ((Math.atan2(l.x, -l.z) / DEG) + 360) % 360;
     if (a <= st.from || a >= st.to || Math.hypot(l.x, l.z) <= S.r0) return TOWER.y;
     const i = clamp(Math.round((a - S.from) / S.step), 0, S.count - 1);
     return TOWER.y + (i + 1) * S.rise + 0.03;
+  }
+
+  // ---------------- the top of the tower ----------------
+  // Walking on up past the last tread you can stand on goes on up the tower in the dark (a fade
+  // through the paper) and out through the hatch into the lantern; the hatch takes you back down onto
+  // the same tread. Up there: the lens and the clockwork that turns it, the door in the glazing and its
+  // steps down to the gallery, the gallery right round, and the telescope at the seaward rail.
+  // `this.up` is true while you're up there. Positions are in room space (the tower's).
+
+  // a point in room space in the door's frame: along = out from the middle, side = across
+  doorFrame(l) {
+    const a = TOP.door.deg * DEG;
+    return { along: l.x * Math.sin(a) - l.z * Math.cos(a), side: l.x * Math.cos(a) + l.z * Math.sin(a) };
+  }
+  fromDoorFrame(l, along, side) {
+    const a = TOP.door.deg * DEG;
+    l.x = Math.sin(a) * along + Math.cos(a) * side;
+    l.z = -Math.cos(a) * along + Math.sin(a) * side;
+  }
+
+  // the floor up there (room y): the lantern's, the gallery deck's, or on the steps between
+  topFloor(l) {
+    const T = TOP, D = T.door, { along, side } = this.doorFrame(l);
+    if (Math.abs(side) < D.half && along > T.glaze - 0.1 && along < D.foot + 0.1) return lerp(T.floor, T.deck, clamp((along - T.glaze) / (D.foot - T.glaze), 0, 1));
+    return Math.hypot(l.x, l.z) < T.glaze + 0.05 ? T.floor : T.deck;
+  }
+
+  // l: where the walker wants to be (room space, corrected in place); y: the height it stands at now
+  collideTop(l, y) {
+    const T = TOP, D = T.door, lane = D.half - 0.14, wide = D.half + 0.2;
+    const { along, side } = this.doorFrame(l);
+    const toR = (r0, r1) => { const r = Math.hypot(l.x, l.z), rr = clamp(r, r0, r1); l.x *= rr / r; l.z *= rr / r; };
+    const inLane = Math.abs(side) <= lane && along > 0;
+    if (y > T.floor - 0.12) {
+      // in the lantern: round the lens, inside the glass, out through the door
+      if (!(inLane && along > T.glaze - 0.4)) toR(T.lensR + 0.25, T.glaze - 0.25);
+      // round the clockwork's case and its crank
+      const ca = T.crank.deg * DEG, cx = Math.sin(ca) * 0.95, cz = -Math.cos(ca) * 0.95;
+      const ex = l.x - cx, ez = l.z - cz, e = Math.hypot(ex, ez);
+      if (e < 0.5) { l.x = cx + ex / e * 0.5; l.z = cz + ez / e * 0.5; }
+      // the hatch: step into it and you're on the stair down
+      const H = T.hatch, a = (Math.atan2(l.x, -l.z) / DEG - H.deg) * DEG, r = Math.hypot(l.x, l.z);
+      if (Math.abs(Math.sin(a) * r) < H.w / 2 - 0.12 && Math.abs(Math.cos(a) * r - H.r) < H.d / 2 && Math.cos(a) > 0) this.hopTo('room');
+      return;
+    }
+    if (y > T.deck + 0.12) {
+      // on the steps, between their rails
+      this.fromDoorFrame(l, clamp(along, T.glaze - 0.3, D.foot + 0.1), clamp(side, -lane, lane));
+      return;
+    }
+    // on the deck: between the lantern's foot and the rail, round the telescope, and onto the steps
+    // only from the front
+    if (inLane && along < D.foot + 0.2) return;
+    if (along > 0 && along < D.foot + 0.1 && Math.abs(side) < wide) this.fromDoorFrame(l, along, Math.sign(side) * (Math.abs(side) < (lane + wide) / 2 ? lane : wide));
+    toR(T.ped + 0.25, T.rail - 0.25);
+    const sa = T.scope.deg * DEG, sx = Math.sin(sa) * T.scope.r, sz = -Math.cos(sa) * T.scope.r;
+    const dx = l.x - sx, dz = l.z - sz, d = Math.hypot(dx, dz);
+    if (d < 0.42) { l.x = sx + dx / d * 0.42; l.z = sz + dz / d * 0.42; }
+  }
+
+  onGallery() { return this.up && this.walker.pos.y < TOWER.y + TOP.deck + 0.5; }
+  onStairs() { return !this.up && this.walker.pos.y > TOWER.y + 0.1; }
+
+  hopTo(to) {
+    if (this.hop || this.leaving) return;
+    this.hop = { to, t: 0, n: 0, swapped: false };
+    this.walker.hold = true;
+  }
+
+  updateHop(dt) {
+    const h = this.hop;
+    if (!h) return;
+    h.t += dt;
+    // footfalls on the stair in the dark
+    const at = [0.2, 0.5, 0.8, 1.1, 1.4];
+    while (h.n < at.length && h.t > at[h.n]) { this.game.audio?.stairStep?.(h.to === 'top' ? 3 + h.n : 7 - h.n); h.n++; }
+    if (!h.swapped && h.t > HOP.out) { h.swapped = true; this.arriveAt(h.to); }
+    if (h.t > HOP.out + HOP.hold + HOP.in) { this.hop = null; this.walker.hold = !!(this.scope || this.wind); }
+  }
+
+  hopFade() {
+    const h = this.hop;
+    return h ? smooth(0, HOP.out, h.t) * (1 - smooth(HOP.out + HOP.hold, HOP.out + HOP.hold + HOP.in, h.t)) : 0;
+  }
+
+  // out of the hatch into the lantern, or back down onto the top tread you can stand on
+  arriveAt(to) {
+    const w = this.walker, T = TOP;
+    this.scope = null; this.wind = null;
+    if (to === 'top') {
+      this.up = true;
+      const H = T.hatch, p = this.roomPoint(H.deg + 24, 1.42, T.floor);
+      w.place(p.x, p.y, p.z);
+      this.faceToward(this.roomPoint(H.deg + 62, 1.7, T.floor + 1.45), w);
+      if (this.upDay !== this.night?.id) { this.upDay = this.night?.id; this.galleryLine = false; this.caption = { text: LANTERN.arrive, t: 0 }; }
+    } else {
+      this.up = false;
+      const S = ROOM.stairs, a = S.from + S.step * (WALK_TREADS - 1.15), p = this.roomPoint(a, 2.75);
+      w.place(p.x, this.roomFloor(p.x, p.z), p.z);
+      this.faceToward(this.roomPoint(a - 45, 2.6, 0.6), w);
+      w.pitch = -0.3;
+    }
+    this.camFromWalker();
+    this.checkSpace();
+  }
+
+  // indoors or out, for the sound: by day the tower's wall, up top the lantern's glass
+  checkSpace() {
+    const w = this.walker;
+    const inside = this.up ? !this.onGallery() : this.mode !== 'day' || this.headland.insideTower(w.pos.x, w.pos.z);
+    if (inside !== this.inside) { this.inside = inside; this.game.audio?.setSpace?.(inside ? 'in' : 'out', true); }
+    this.game.audio?.aloft?.(this.up ? (inside ? 0.4 : 1) : 0);
+    if (this.onGallery() && !this.galleryLine) { this.galleryLine = true; this.caption = { text: LANTERN.gallery, t: 0 }; }
+  }
+
+  // where the clockwork's crank handle is, and the telescope's eyepiece (world space)
+  crankAt() {
+    this.room.crank.updateMatrixWorld();
+    return new THREE.Vector3(0, TOP.crank.arm, -0.17).applyMatrix4(this.room.crank.matrixWorld);
+  }
+  scopeEye() { const S = TOP.scope; return this.roomPoint(S.deg, S.r - 0.46, TOP.deck + S.h + 0.03); }
+
+  // wind the clockwork: three turns of the crank, a click of the ratchet with each sixth, then the
+  // lens turns until it runs down
+  startWind() {
+    this.wind = { t: 0, clicks: 0 };
+    this.walker.hold = true;
+    this.game.audio?.soft?.();
+  }
+
+  // the telescope: the view narrows to the glass and can be turned a little along the bay
+  lookThrough() {
+    const S = TOP.scope, eye = this.scopeEye(), out = this.roomPoint(S.deg, S.r + 6, TOP.deck + S.h - 0.4);
+    const d = out.sub(eye);
+    this.scope = { yaw: Math.atan2(-d.x, -d.z), pitch: Math.atan2(d.y, Math.hypot(d.x, d.z)) };
+    this.walker.yaw = this.scope.yaw; this.walker.pitch = this.scope.pitch;
+    this.walker.hold = true;
+    this.game.audio?.soft?.();
+  }
+
+  leaveScope() {
+    if (!this.scope) return;
+    this.scope = null;
+    this.walker.hold = !!(this.hop || this.wind);
+    this.game.audio?.soft?.();
+  }
+
+  updateTop(dt) {
+    const R = this.room;
+    if (this.caption) { this.caption.t += dt; if (this.caption.t > 4) this.caption = null; }
+    const W = this.wind;
+    if (W) {
+      W.t += dt;
+      const turns = smooth(0.25, 2.7, W.t) * 3;
+      R.crank.rotation.z = -turns * Math.PI * 2;
+      const clicks = Math.floor(turns * 6);
+      while (W.clicks < clicks) { W.clicks++; this.game.audio?.ratchet?.(); }
+      if (W.t > 3) {
+        this.wind = null;
+        this.walker.hold = !!(this.hop || this.scope);
+        if (!(this.lensRun > 0)) this.caption = { text: LANTERN.turning, t: 0 };
+        this.lensRun = LENS_RUN;
+      }
+    }
+    // the lens: away slowly as the weight starts down, and slowing as it runs out
+    if (this.lensRun > 0) {
+      this.lensRun = Math.max(0, this.lensRun - dt);
+      R.lens.rotation.y -= dt * LENS_RATE * smooth(0, 5, LENS_RUN - this.lensRun) * smooth(0, 12, this.lensRun);
+    }
+    if (this.scope) {
+      const w = this.walker, S = this.scope;
+      w.yaw = S.yaw + clamp(wrapA(w.yaw - S.yaw), -1.1, 1.1);
+      w.pitch = clamp(w.pitch, S.pitch - 0.35, S.pitch + 0.25);
+      // the view from past the telescope's own end, so the tube isn't in it
+      const cp = Math.cos(w.pitch);
+      this.cam.pos.copy(this.scopeEye()).add(new THREE.Vector3(-Math.sin(w.yaw) * cp, Math.sin(w.pitch), -Math.cos(w.yaw) * cp).multiplyScalar(1.1));
+      this.cam.yaw = w.yaw; this.cam.pitch = w.pitch; this.cam.roll = 0;
+      this.cam.fov += (9 - this.cam.fov) * Math.min(1, dt * 5);
+    }
+    this.hands.visible = !this.scope;
+  }
+
+  // the telescope's view: dark all round a round field, its edge a little soft
+  drawScope(L) {
+    const v = L.view, c = L.paint, cx = (v.x0 + v.x1) / 2, cy = (v.y0 + v.y1) / 2;
+    const r = Math.min(v.x1 - v.x0, v.y1 - v.y0) * 0.44;
+    c.save();
+    c.fillStyle = 'rgba(30,26,24,0.96)';
+    c.beginPath(); c.rect(v.x0 - 400, v.y0 - 400, v.x1 - v.x0 + 800, v.y1 - v.y0 + 800); c.arc(cx, cy, r, 0, Math.PI * 2, true); c.fill('evenodd');
+    const g = c.createRadialGradient(cx, cy, r * 0.82, cx, cy, r);
+    g.addColorStop(0, 'rgba(30,26,24,0)'); g.addColorStop(1, 'rgba(30,26,24,0.85)');
+    c.fillStyle = g; c.beginPath(); c.arc(cx, cy, r, 0, Math.PI * 2); c.fill();
+    c.restore();
+  }
+
+  // the climb in the dark: the view goes back into the paper and comes out of it up top (or below)
+  drawHop(L) {
+    const k = this.hopFade();
+    if (k <= 0) return;
+    const v = L.view, c = L.paint;
+    c.fillStyle = rgba('#EFE6D2', k);
+    c.fillRect(v.x0 - 400, v.y0 - 400, v.x1 - v.x0 + 800, v.y1 - v.y0 + 800);
+  }
+
+  drawCaption(L) {
+    const C = this.caption, v = L.view;
+    const a = 0.75 * smooth(0.3, 1.1, C.t) * (1 - smooth(3, 4, C.t));
+    letter(L.ink, C.text, (v.x0 + v.x1) / 2, v.y0 + 120, { hand: 'keeper', size: 40, align: 'center', alpha: a, color: '#2B2622', drift: this.night?.drift || 0, seed: 5 });
   }
 
   // ---------------- the day ----------------
@@ -618,9 +842,11 @@ export class Keeper {
     this.cam.fov += (62 + (w.speedScale - 1) * 1.6 - this.cam.fov) * Math.min(1, dt * 4);
     // through the door: the room's sound, or the open air's
     const inside = H.insideTower(w.pos.x, w.pos.z);
-    if (inside !== this.inside) { this.inside = inside; g.audio?.setSpace?.(inside ? 'in' : 'out', true); }
+    this.checkSpace();
     const hit = H.triggers(w.pos);
     if (this.state === 'fail') {
+      // the light fails wherever you are, but the bloom to the table waits till you're back down
+      if (this.up || this.onStairs()) this.st = Math.min(this.st, FAIL_DUR);
       this.headland.hour = lerp(this.failFrom, DAY.to, smooth(0, FAIL_DUR, this.st));
       if (this.st > FAIL_DUR + 0.3) this.toDusk();
     } else {
@@ -701,7 +927,7 @@ export class Keeper {
   footstep(speed) {
     const a = this.game.audio;
     if (!a?.footstep) return;
-    const surf = this.mode === 'day' ? this.headland.surface(this.walker.pos) : 'wood';
+    const surf = this.up ? 'stone' : this.mode === 'day' ? this.headland.surface(this.walker.pos) : 'wood';
     a.footstep(surf, Math.min(1, speed / 3));
   }
 
@@ -765,6 +991,13 @@ export class Keeper {
     const dist = d.length();
     const fwd = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(this.cam.pitch, this.cam.yaw, 0, 'YXZ'));
     const ang = Math.acos(clamp(d.normalize().dot(fwd), -1, 1));
+    if (this.up) {
+      // up top: the clockwork's crank, and the telescope
+      const near = (p, far, wide) => { const v = p.sub(eye), dd = v.length(); return dd < far && Math.acos(clamp(v.normalize().dot(fwd), -1, 1)) < wide; };
+      if (!this.wind && !this.onGallery() && near(this.crankAt(), 2.0, 0.6)) return 'crank';
+      if (this.onGallery() && near(this.scopeEye(), 1.5, 0.8)) return 'scope';
+      return null;
+    }
     if (this.mode && dist < 1.9 && ang < 0.55) return 'book';
     // by day, the door when it's shut and within reach
     if (this.mode === 'day' && !this.doorOpen()) {
@@ -776,8 +1009,12 @@ export class Keeper {
   }
 
   use() {
-    if (this.state !== 'walk') return;
+    if (this.scope) { this.leaveScope(); return; }
+    if (this.state !== 'walk' && !(this.state === 'fail' && this.up)) return;
+    if (this.hop || this.wind) return;
     const f = this.focus();
+    if (f === 'crank') { this.startWind(); return; }
+    if (f === 'scope') { this.lookThrough(); return; }
     if (f === 'door') { this.setState('door'); return; }
     // by day, the table means waiting there for dusk
     if (f === 'book' && this.mode === 'day') { this.startFail(); return; }
@@ -820,8 +1057,9 @@ export class Keeper {
     }
     if (this.state === 'read' && kind === 'down') { this.advanceRead(); return; }
     if (this.state === 'stairs' && kind === 'down') { this.climb(); return; }
-    if (this.state === 'walk' && kind === 'down' && e.pointerType !== 'touch' && this.walker.locked) { this.use(); return; }
-    if (this.state === 'walk' && kind === 'down' && e.pointerType !== 'touch' && this.focus() && !this.walker.wantLock) { this.use(); return; }
+    const walking = this.state === 'walk' || (this.state === 'fail' && this.up);
+    if (walking && kind === 'down' && e.pointerType !== 'touch' && this.walker.locked) { this.use(); return; }
+    if (walking && kind === 'down' && e.pointerType !== 'touch' && (this.focus() || this.scope) && !this.walker.wantLock) { this.use(); return; }
     if (this.state !== 'lean') return;
     const [nx, ny] = this.ndc(e);
     const hit = this.book.pick(nx, ny, this.world.camera);
@@ -856,7 +1094,8 @@ export class Keeper {
     }
     if (this.state === 'chair' && this.watch && (k === ' ' || k === 'l' || k === 'L')) { this.toggleLapse(); return true; }
     if (this.state === 'dawn-chair' && (k === 'e' || k === 'E' || k === 'Enter' || k === ' ')) { this.toLogbook(); return true; }
-    if (this.state === 'walk' && (k === 'e' || k === 'E' || k === 'Enter' || k === ' ')) { this.use(); return true; }
+    if (this.scope && (k === 'Escape' || k === 'q' || k === 'Q')) { this.leaveScope(); return true; }
+    if ((this.state === 'walk' || (this.state === 'fail' && this.up)) && (k === 'e' || k === 'E' || k === 'Enter' || k === ' ')) { this.use(); return true; }
     if (this.state === 'read' && (k === 'e' || k === 'E' || k === 'Enter' || k === ' ')) { this.advanceRead(); return true; }
     if (this.state === 'stairs' && (k === ' ' || k === 'Enter' || k === 'ArrowUp')) { this.climb(); return true; }
     if (this.state === 'lean') {
@@ -898,6 +1137,7 @@ export class Keeper {
     this.book.update(dt, { redraw: this.state === 'lean' || this.state === 'lean-in' || this.state === 'closing' || this.state === 'lean-out' });
     this.book.setSingle(g.layers.cssW / g.layers.cssH < 0.95);
 
+    this.updateHop(dt);
     switch (this.state) {
       case 'fail':
         this.updateDay(dt);
@@ -918,10 +1158,11 @@ export class Keeper {
       case 'walk': {
         if (this.mode === 'day') { this.updateDay(dt); break; }
         this.walker.update(dt, { collide: (p) => this.collideRoom(p), ground: (x, z) => this.roomFloor(x, z) });
+        this.checkSpace();
         const ep = this.walker.eyePose();
         this.cam.pos.copy(ep.pos); this.cam.yaw = ep.yaw; this.cam.pitch = ep.pitch; this.cam.roll = ep.roll;
         this.cam.fov += (62 - this.cam.fov) * Math.min(1, dt * 4);
-        if (g.autoplay && this.st > 0.8) this.setState('lean-in');
+        if (g.autoplay && this.st > 0.8 && !this.up) this.setState('lean-in');
         break;
       }
       case 'lean':
@@ -985,6 +1226,7 @@ export class Keeper {
       }
       default: break;
     }
+    this.updateTop(dt);
     this.stepBlend(dt);
     this.lit = Math.max(0, this.lit - dt * 0.4);
     if (this.fly) this.flyCam(dt);
@@ -1516,6 +1758,15 @@ export class Keeper {
   updatePrompt() {
     this.prompt = null;
     const mouse = this.game.input.type === 'mouse', use = mouse ? 'E — ' : 'tap — ';
+    if (this.up) {
+      if (this.hop) return;
+      if (this.scope) { this.prompt = mouse ? 'E — step back from the glass' : 'tap — step back from the glass'; return; }
+      const f = (this.state === 'walk' || this.state === 'fail') && !this.wind ? this.focus() : null;
+      if (f === 'crank') this.prompt = use + 'wind the clockwork';
+      else if (f === 'scope') this.prompt = use + 'look through the glass';
+      else if (this.walker.pos.distanceTo(this.roomPoint(TOP.hatch.deg, TOP.hatch.r, TOP.floor)) < 0.8) this.prompt = 'the stairs down';
+      return;
+    }
     if (this.mode === 'day') {
       const f = this.state === 'walk' ? this.focus() : null;
       if (f === 'door') this.prompt = use + 'open the door';
@@ -1709,13 +1960,16 @@ export class Keeper {
 
   hudActive() {
     const night = this.state === 'chair' && this.watch;
-    return !!this.prompt || !!this.walker.stick || !!this.flash || !!this.reading || this.state === 'stairs' || (night && (this.night.weather === 'rain' || this.nightP > 0.8));
+    return !!this.prompt || !!this.walker.stick || !!this.flash || !!this.reading || this.state === 'stairs' || !!this.hop || !!this.scope || !!this.caption || (night && (this.night.weather === 'rain' || this.nightP > 0.8));
   }
 
   drawHud(L) {
     if (this.state === 'chair' && this.watch) this.drawNightHud(L);
     if (this.reading) this.drawReading(L);
     if (this.state === 'stairs') this.drawStairLines(L);
+    if (this.scope) this.drawScope(L);
+    if (this.caption) this.drawCaption(L);
+    this.drawHop(L);
     this.walker.drawTouch(L);
     if (this.flash) {
       const v = L.view;

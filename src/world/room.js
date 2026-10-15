@@ -313,9 +313,11 @@ export function buildRoom() {
 
   const group = new THREE.Group();
   group.name = 'watchroom';
-  group.add(b.finish('room'), sb.finish('shelves'), table, control, clock, stove, chair, mug, sill.group, door, buildTower(ROOM, M), hatchGlow);
+  const tower = buildTower(ROOM, M);
+  group.add(b.finish('room'), sb.finish('shelves'), table, control, clock, stove, chair, mug, sill.group, door, tower, hatchGlow);
   return {
     group, table, lamp, flame, halo, clock, hourHand, minHand, lever: pivot, stove, stoveGlow, chair, mug, M, sill, hatchGlow,
+    lens: tower.userData.lens, crank: tower.userData.crank,
     door: { pivot: door, swing, ring: ringAt },
     // 2D obstacles for walking, in room space: circles [x, z, r] and the stair annulus
     obstacles: {

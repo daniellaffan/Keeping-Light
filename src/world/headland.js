@@ -64,6 +64,8 @@ export class Headland {
   // next: where the walker wants to be (corrected in place); prev: where it is now
   collide(next, prev) {
     const k = this.k, D = ROOM.door;
+    // up the tower, out of the day's way
+    if (k.up) { k.collideRoom(next); return next; }
     const open = k.doorOpen();
     const dw = this.doorway(next);
     const r = Math.hypot(next.x - TOWER.x, next.z - TOWER.z);

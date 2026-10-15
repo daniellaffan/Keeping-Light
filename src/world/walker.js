@@ -23,6 +23,7 @@ export class Walker {
     this.speedScale = 1;   // the outdoor pace: far from anything, the afternoon runs on and so do you
     this.maxSpeed = 14;
     this.autoTo = null;    // autoplay: a world point { x, z } to walk to
+    this.hold = false;     // looking only, not walking (at the telescope, winding the clockwork)
     const canvas = game.canvas, inp = game.input;
 
     document.addEventListener('pointerlockchange', () => { this.locked = document.pointerLockElement === canvas; });
@@ -96,7 +97,7 @@ export class Walker {
   // collide(nextPos) → corrected position (Vector3); ground(x, z) → height of the floor
   update(dt, { collide = null, ground = null } = {}) {
     let fx = 0, fz = 0;
-    if (this.enabled) {
+    if (this.enabled && !this.hold) {
       const k = this.game.input.keys;
       const f = (k.has('w') || k.has('W') || k.has('ArrowUp') ? 1 : 0) - (k.has('s') || k.has('S') || k.has('ArrowDown') ? 1 : 0);
       const r = (k.has('d') || k.has('D') || k.has('ArrowRight') ? 1 : 0) - (k.has('a') || k.has('A') || k.has('ArrowLeft') ? 1 : 0);

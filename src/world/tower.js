@@ -25,6 +25,16 @@ const G0 = DECK + PED, G1 = G0 + 2.3;       // the glazing
 const GLAZE_R = 1.96;
 // the lamp, in the middle of the glazing: bay.js hangs the beam here
 export const LAMP_HEIGHT = G0 + 1.15;
+// The top, where the stairs come out (heights above the watch-room floor; angles as the room's): the
+// lantern floor round the lens, the door in the glazing and its iron steps down to the gallery deck,
+// the hatch the stair comes up through, the clockwork that turns the lens, and the telescope.
+export const TOP = {
+  floor: G0, deck: DECK, glaze: GLAZE_R, ped: PED_R, rail: RAIL, lensR: 0.8,
+  door: { deg: 150, half: 0.38, h: 1.9, foot: GLAZE_R + 0.66 },
+  hatch: { deg: 232, r: 1.38, w: 0.62, d: 0.56 },
+  crank: { deg: 292, r: 1.01, h: 0.5, arm: 0.14 },
+  scope: { deg: 0, r: 3.04, h: 1.26 },
+};
 
 // the shaft's radius at height y: straight-ish above, flaring out toward the foot
 export function shaftR(y) {
@@ -62,6 +72,7 @@ export function buildTower(ROOM, Mroom) {
     dark: wash({ color: '#3A3634', color2: '#2E2A28', line: 0.8, crease: 0.3, gran: 0.6 }),
     brass: Mroom.brass,
     stone: Mroom.stone,
+    oak: Mroom.oak,
   };
   const b = new Builder(53);
 
@@ -145,18 +156,52 @@ export function buildTower(ROOM, Mroom) {
     b.add(new THREE.TorusGeometry(0.08, 0.016, 6, 16), M.brass, { pos: xz(a, PED_R + 0.055, DECK + PED * 0.62), rot: [0, facing(a), 0], wonk: 0 });
     b.add(new THREE.CircleGeometry(0.075, 14).rotateY(Math.PI), M.dark, { pos: xz(a, PED_R + 0.05, DECK + PED * 0.62), rot: [0, facing(a), 0], wonk: 0 });
   }
-  // a little iron door out onto the gallery, on the landward side
-  b.box(M.iron, 0.56, 0.84, 0.05, xz(150, PED_R + 0.02, DECK + 0.46), { rot: [0, facing(150), 0] });
-  b.add(new THREE.TorusGeometry(0.035, 0.008, 6, 10), M.brass, { pos: xz(147, PED_R + 0.06, DECK + 0.5), rot: [0, facing(147), 0] });
   // the glazing: two families of helical astragals crossing in diamonds, Fastnet fashion; the glass
   // itself left clear, so the lens and the lamp's light show through
   for (const [y, t] of [[G0 + 0.03, 0.05], [G1 - 0.03, 0.05]]) b.add(new THREE.TorusGeometry(GLAZE_R, t, 5, 64), M.iron, { pos: [0, y, 0], rot: [Math.PI / 2, 0, 0], wonk: 0 });
+  // (broken off round the door, whose frame carries them)
+  const DR = TOP.door, dHalf = Math.asin(DR.half / GLAZE_R) / DEG + 1.5;
+  const inDoor = (a, y) => Math.abs(((a - DR.deg + 540) % 360) - 180) < dHalf && y < G0 + DR.h + 0.02;
   for (const dir of [1, -1]) for (let i = 0; i < 16; i++) {
-    const pts = [];
-    for (let k = 0; k <= 12; k++) { const t = k / 12, a = i * 22.5 + dir * t * 52; pts.push(new THREE.Vector3(...xz(a, GLAZE_R, G0 + t * (G1 - G0)))); }
-    b.add(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 18, 0.02, 4, false), M.iron, { wonk: 0 });
+    let pts = [];
+    const flush = () => { if (pts.length > 1) b.add(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), pts.length * 2, 0.02, 4, false), M.iron, { wonk: 0 }); pts = []; };
+    for (let k = 0; k <= 48; k++) {
+      const t = k / 48, a = i * 22.5 + dir * t * 52, y = G0 + t * (G1 - G0);
+      if (inDoor(a, y)) { flush(); continue; }
+      pts.push(new THREE.Vector3(...xz(a, GLAZE_R, y)));
+    }
+    flush();
   }
-  lens(b, M);
+  door(b, M);
+  hatch(b, M);
+  telescope(b, M);
+  // the clockwork drum under the lens; the lens on it (turned by the clockwork) and the crank are
+  // their own groups, so they can move
+  b.cyl(M.dark, 0.42, 0.44, 0.15, [0, G0 + 0.075, 0], { seg: 24, wonk: 0 });
+  b.add(new THREE.TorusGeometry(0.43, 0.014, 5, 32), M.brass, { pos: [0, G0 + 0.13, 0], rot: [Math.PI / 2, 0, 0], wonk: 0 });
+  b.box(M.brass, 0.16, 0.1, 0.03, xz(TOP.crank.deg + 40, 0.44, G0 + 0.08), { rot: [0, facing(TOP.crank.deg + 40), 0], wonk: 0 });
+  const lb = new Builder(61);
+  lens(lb, M);
+  const lensGroup = lb.finish('lens');
+  lensGroup.matrixAutoUpdate = true;
+  delete lensGroup.userData.pieces;
+  // the clockwork's case, standing clear of the lens, with the crank out of its face
+  const C = TOP.crank, cr = [0, facing(C.deg), 0];
+  b.box(M.dark, 0.36, C.h + 0.16, 0.2, xz(C.deg, 0.9, G0 + (C.h + 0.16) / 2), { rot: cr, wonk: 0 });
+  b.box(M.brass, 0.4, 0.03, 0.24, xz(C.deg, 0.9, G0 + C.h + 0.175), { rot: cr, wonk: 0 });
+  b.add(new THREE.TorusGeometry(0.06, 0.012, 5, 16), M.brass, { pos: xz(C.deg, 1.0, G0 + C.h), rot: cr, wonk: 0 });
+  b.box(M.brass, 0.1, 0.06, 0.01, xz(C.deg, 1.0, G0 + 0.18), { rot: cr, wonk: 0 });
+  // the crank turns on its axle, square out of the case: its own group, local -z outward
+  const cb = new Builder(67);
+  rod(cb, M.iron, new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -0.08), 0.02);
+  rod(cb, M.iron, new THREE.Vector3(0, 0, -0.08), new THREE.Vector3(0, C.arm, -0.08), 0.016);
+  rod(cb, M.oak, new THREE.Vector3(0, C.arm, -0.08), new THREE.Vector3(0, C.arm, -0.17), 0.02);
+  cb.add(new THREE.SphereGeometry(0.026, 10, 8), M.brass, { pos: [0, C.arm, -0.175], wonk: 0 });
+  const crank = cb.finish('crank');
+  crank.matrixAutoUpdate = true;
+  crank.position.set(...xz(C.deg, C.r, G0 + C.h));
+  crank.rotation.set(0, facing(C.deg), 0);
+  delete crank.userData.pieces;
 
   // ---- the roof: a red iron cupola with ribs, a ladder, a hand rail, the ventilator and the vane ----
   b.add(new THREE.CylinderGeometry(2.17, 2.0, 0.22, 48), M.red, { pos: [0, G1 + 0.11, 0], wonk: 0 });
@@ -207,6 +252,9 @@ export function buildTower(ROOM, Mroom) {
   for (let y = 1.2; y < T - 0.5; y += 1.5) b.box(M.iron, 0.09, 0.05, 0.07, xz(CONDUCTOR, outer(y) + 0.03, y), { rot: [0, facing(CONDUCTOR), 0] });
 
   const group = b.finish('tower');
+  group.add(lensGroup, crank);
+  group.userData.lens = lensGroup;
+  group.userData.crank = crank;
   return group;
 }
 
@@ -239,9 +287,78 @@ function lens(b, M) {
     rod(b, M.brass, new THREE.Vector3(...xz(a, 0.82, c)), new THREE.Vector3(...xz(a, 0.44, c + 0.95)), 0.016);
   }
   b.add(new THREE.ConeGeometry(0.22, 0.26, 12), M.brass, { pos: [0, c + 1.1, 0], wonk: 0 });
-  b.cyl(M.dark, 0.15, 0.24, c - 0.98 - DECK, [0, (c - 0.98 + DECK) / 2, 0], { seg: 12, wonk: 0 });
-  b.box(M.dark, 0.5, 0.42, 0.5, [0, DECK + 0.21, 0], { wonk: 0 });
-  b.box(M.brass, 0.52, 0.04, 0.52, [0, DECK + 0.44, 0], { wonk: 0 });
+  b.cyl(M.dark, 0.15, 0.24, c - 0.98 - G0, [0, (c - 0.98 + G0) / 2, 0], { seg: 12, wonk: 0 });
+  // four bullseye panels on the belt, the flashes the lens throws as it turns (and what shows it turning)
+  for (let i = 0; i < 4; i++) {
+    const a = 45 + i * 90;
+    b.add(new THREE.CircleGeometry(0.25, 24).rotateY(Math.PI), M.lens, { pos: xz(a, 0.815, c), rot: [0, facing(a), 0], wonk: 0 });
+    for (const r of [0.09, 0.17, 0.25]) b.add(new THREE.TorusGeometry(r, r === 0.25 ? 0.016 : 0.009, 5, 24), M.brass, { pos: xz(a, 0.82, c), rot: [0, facing(a), 0], wonk: 0 });
+  }
+}
+
+// The door out of the lantern: an iron frame in the glazing, its leaf folded back against the glass,
+// and four iron steps down outside to the gallery deck, between two rails.
+function door(b, M) {
+  const D = TOP.door, a0 = D.deg * DEG;
+  // (along, side, y) in the door's frame: along = out from the middle, side = across, to the room's
+  const at = (along, side, y) => [Math.sin(a0) * along + Math.cos(a0) * side, y, -Math.cos(a0) * along + Math.sin(a0) * side];
+  const rot = [0, facing(D.deg), 0];
+  for (const s of [-1, 1]) b.box(M.iron, 0.06, D.h, 0.08, at(GLAZE_R, s * (D.half + 0.03), G0 + D.h / 2), { rot, wonk: 0 });
+  b.box(M.iron, D.half * 2 + 0.14, 0.08, 0.08, at(GLAZE_R, 0, G0 + D.h + 0.04), { rot, wonk: 0 });
+  b.box(M.iron, D.half * 2 + 0.1, 0.03, 0.14, at(GLAZE_R, 0, G0 + 0.015), { rot, wonk: 0 });
+  // the leaf, swung square out from the glazing on the hinge side and hooked back there, beside the steps
+  const leaf = { along: GLAZE_R + 0.38, side: D.half + 0.1 }, lrot = [0, facing(D.deg) + Math.PI / 2, 0];
+  b.box(M.iron, 0.72, D.h - 0.06, 0.03, at(leaf.along, leaf.side, G0 + D.h / 2 - 0.02), { rot: lrot, wonk: 0.4 });
+  b.box(M.iron, 0.6, 0.04, 0.035, at(leaf.along, leaf.side, G0 + 0.4), { rot: lrot, wonk: 0 });
+  b.box(M.iron, 0.6, 0.04, 0.035, at(leaf.along, leaf.side, G0 + D.h - 0.4), { rot: lrot, wonk: 0 });
+  b.add(new THREE.TorusGeometry(0.035, 0.008, 6, 10), M.brass, { pos: at(leaf.along + 0.28, leaf.side - 0.03, G0 + 1.0), rot: lrot, wonk: 0 });
+  // the steps: four treads from the sill down to the deck
+  const run = D.foot - GLAZE_R, n = 4, drop = G0 - DECK;
+  for (let i = 1; i <= n; i++) {
+    const along = GLAZE_R + (i - 0.5) * run / n;
+    b.box(M.iron, D.half * 2 + 0.04, 0.035, run / n + 0.02, at(along, 0, G0 - i * drop / (n + 1) - 0.02), { rot, wonk: 0.5 });
+  }
+  for (const s of [-1, 1]) {
+    const side = s * (D.half + 0.03);
+    rod(b, M.iron, new THREE.Vector3(...at(GLAZE_R + 0.02, side, G0 - 0.04)), new THREE.Vector3(...at(D.foot + 0.05, side, DECK + 0.02)), 0.022);
+    rod(b, M.iron, new THREE.Vector3(...at(GLAZE_R + 0.06, side, G0 + 0.92)), new THREE.Vector3(...at(D.foot + 0.05, side, DECK + 0.95)), 0.016);
+    rod(b, M.iron, new THREE.Vector3(...at(D.foot + 0.05, side, DECK)), new THREE.Vector3(...at(D.foot + 0.05, side, DECK + 0.97)), 0.016);
+  }
+}
+
+// The hatch in the lantern floor where the stair comes up out of the tower: a dark opening, its
+// coaming, and the ladder's two rails curving over the top to hold on by.
+function hatch(b, M) {
+  const Hc = TOP.hatch, rot = [0, facing(Hc.deg), 0], c = xz(Hc.deg, Hc.r, G0 + 0.004);
+  b.add(new THREE.PlaneGeometry(Hc.w, Hc.d).rotateX(-Math.PI / 2), M.dark, { pos: c, rot, wonk: 0 });
+  const a0 = Hc.deg * DEG;
+  const at = (side, along, y) => [Math.cos(a0) * side + Math.sin(a0) * (Hc.r + along), y, Math.sin(a0) * side - Math.cos(a0) * (Hc.r + along)];
+  for (const s of [-1, 1]) {
+    b.box(M.oak, Hc.w + 0.08, 0.04, 0.04, at(0, s * (Hc.d / 2 + 0.02), G0 + 0.02), { rot, wonk: 0.3 });
+    b.box(M.oak, 0.04, 0.04, Hc.d, at(s * (Hc.w / 2 + 0.02), 0, G0 + 0.02), { rot, wonk: 0.3 });
+    // a ladder rail rising out of the hatch on the side it is climbed from, bent over at the top
+    const pts = [];
+    for (let k = 0; k <= 10; k++) {
+      const t = k / 10, bend = Math.sin(t * Math.PI / 2);
+      pts.push(new THREE.Vector3(...at(-Hc.w / 2 + 0.04 + (1 - Math.cos(t * Math.PI / 2)) * 0.18, s * 0.2, G0 - 0.3 + bend * 1.15)));
+    }
+    b.add(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 16, 0.018, 5, false), M.iron, { wonk: 0 });
+  }
+}
+
+// A brass telescope on a tripod at the seaward rail, for reading the bay from the top.
+function telescope(b, M) {
+  const S = TOP.scope, top = DECK + S.h - 0.08;
+  for (let i = 0; i < 3; i++) {
+    const a = S.deg + 60 + i * 120, [fx, fz] = polar(S.deg, S.r), [ox, oz] = polar(a, 0.26);
+    rod(b, M.iron, new THREE.Vector3(fx + ox, DECK, fz + oz), new THREE.Vector3(fx, top, fz), 0.014);
+  }
+  b.cyl(M.brass, 0.035, 0.03, 0.1, xz(S.deg, S.r, top + 0.03), { seg: 10, wonk: 0 });
+  const tilt = 0.06;
+  const p0 = new THREE.Vector3(...xz(S.deg, S.r - 0.36, DECK + S.h + 0.36 * tilt)), p1 = new THREE.Vector3(...xz(S.deg, S.r + 0.42, DECK + S.h - 0.42 * tilt));
+  rod(b, M.brass, p0, p1, 0.034);
+  rod(b, M.brass, p1, p1.clone().add(p1.clone().sub(p0).setLength(0.12)), 0.046);
+  rod(b, M.dark, p0.clone().add(p0.clone().sub(p1).setLength(0.1)), p0, 0.02);
 }
 
 // Pieces of one round-headed window, outward along -Z from the wall at its foot.

@@ -98,6 +98,13 @@ export class Sfx {
     noiseHit(this.ctx, this.bus, t + 0.02, { type: 'bandpass', freq: 1200, q: 1, vel: 0.025, d: 0.08 });
   }
 
+  // a click of the clockwork's ratchet as the crank goes round
+  ratchet() {
+    const t = this.now;
+    noiseHit(this.ctx, this.steps, t, { type: 'bandpass', freq: 3200 + Math.random() * 600, q: 3, vel: 0.05, d: 0.02 });
+    noiseHit(this.ctx, this.steps, t + 0.004, { type: 'bandpass', freq: 900, q: 2, vel: 0.03, d: 0.03 });
+  }
+
   // a footstep: boards in the tower, stone at the door and the slip, the lane's gravel, the grass
   footstep(surface = 'grass', v = 0.5) {
     const t = this.now, c = this.ctx, o = this.steps, k = (0.65 + 0.35 * v) * (0.85 + Math.random() * 0.3);
