@@ -288,7 +288,7 @@ export class Keeper {
     const L = {
       P, tod,
       top: col(P.skyTop), mid: col(P.skyMid), low: col(P.skyLow), hor: col(P.skyHor), cloud: col(P.cloud),
-      seaNear: col(P.seaNear), seaMid: col(P.seaMid), seaFar: col(P.seaFar),
+      seaNear: col(P.seaNear), seaMid: col(P.seaMid), seaFar: col(P.seaFar), seaShallow: col(P.seaShallow || P.seaMid),
       sunCol: col(P.sun ? P.sun.c : '#E8ECF4'), sunGlow: P.sun ? 0.8 : 0, stars: 0,
       sunDir: (sunDir || (tod === 'dawn' ? DAWN_SUN : DUSK_SUN)).clone(),
     };

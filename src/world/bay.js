@@ -13,6 +13,7 @@ import { wash, glowMaterial, beamMaterial } from './materials.js';
 import { Builder } from './build.js';
 import { LAMP_HEIGHT } from './tower.js';
 import { rng, noise1, fbm1, fbm2, makeCanvas, smooth } from '../render/paint.js';
+import { groundPaint, groundMaterial, buildFlora, buildPaths, buildShore } from './flora.js';
 
 // sea level for each tide (m), and the height of each kind of reef's top
 export const TIDE = { high: 1.0, mid: 0, low: -1.0 };
@@ -45,7 +46,14 @@ const coastEdges = (poly) => {
   return out;
 };
 const COAST = [...coastEdges(LAND.north), ...coastEdges(LAND.south)];
-function shoreDist(x, y) {
+// the same coast as runs of joined points, one per stretch of shore
+export const COAST_CHAINS = [];
+for (const e of COAST) {
+  const last = COAST_CHAINS[COAST_CHAINS.length - 1], end = last?.[last.length - 1];
+  if (end && end[0] === e[0] && end[1] === e[1]) last.push([e[2], e[3]]);
+  else COAST_CHAINS.push([[e[0], e[1]], [e[2], e[3]]]);
+}
+export function shoreDist(x, y) {
   let d = Infinity;
   for (const e of COAST) d = Math.min(d, segD(x, y, e[0], e[1], e[2], e[3]));
   return d;
@@ -103,26 +111,22 @@ function terrain() {
   g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   g.setIndex(idx);
   g.computeVertexNormals();
-  // pigment: grass on the tops, bare rock where it falls steeply, shingle along the shore
+  // pigment and flowers: turf, gorse, heather and bracken on the tops, rock where it falls steeply,
+  // shingle along the shore (flora.js)
   const n = g.attributes.normal;
-  const grass = new THREE.Color('#7E9157'), grass2 = new THREE.Color('#687C47'), heath = new THREE.Color('#8C8458');
-  const rock = new THREE.Color('#9A8572'), rock2 = new THREE.Color('#7E6E62'), shingle = new THREE.Color('#BCAA8C'), bed = new THREE.Color('#5E6E6C'), lane = new THREE.Color('#B59E7C');
-  const c = new THREE.Color(), c2 = new THREE.Color();
+  const flora = new Float32Array(nx * ny * 4);
+  const out = { c: new THREE.Color(), f: [0, 0, 0, 0] };
   for (let k = 0; k < nx * ny; k++) {
     const x = pos[k * 3] / UNIT, y = pos[k * 3 + 2] / UNIT, h = hs[k];
-    const ny_ = n.getY(k);
-    const v = fbm2(x * 0.15, y * 0.15, 5);
-    c.copy(grass).lerp(grass2, smooth(0.35, 0.7, v)).lerp(heath, smooth(0.6, 0.85, fbm2(x * 0.05, y * 0.05, 8)) * 0.7);
-    c2.copy(rock).lerp(rock2, smooth(0.3, 0.75, fbm2(x * 0.4, y * 0.9, 6)));
-    c.lerp(c2, smooth(0.86, 0.62, ny_));
-    c.lerp(shingle, smooth(2.6, 1.2, h) * smooth(-1.6, -0.6, h) * 0.9);
-    // the lane, worn into the grass
-    if (h > 1) c.lerp(lane, smooth(0.8, 0.25, laneDist(x, y)) * 0.7);
-    c.lerp(bed, smooth(-1.2, -2.4, h));
+    const d = pointInPoly(x, y, LAND.north) || pointInPoly(x, y, LAND.south) ? shoreDist(x, y) : -shoreDist(x, y);
+    groundPaint(x, y, h, n.getY(k), d, laneDist(x, y), out);
+    const c = out.c;
     tint[k * 4] = c.r; tint[k * 4 + 1] = c.g; tint[k * 4 + 2] = c.b; tint[k * 4 + 3] = 0;
+    flora.set(out.f, k * 4);
   }
   g.setAttribute('tint', new THREE.BufferAttribute(tint, 4));
-  const mat = wash({ color: '#ffffff', color2: '#F3EFE6', tint: true, world: true, noiseScale: 0.05, line: 0.9, crease: 0.3, gran: 0.95 });
+  g.setAttribute('flora', new THREE.BufferAttribute(flora, 4));
+  const mat = groundMaterial();
   const m = new THREE.Mesh(g, mat);
   m.matrixAutoUpdate = false;
   m.userData.grid = { ...GRID, nx, ny, hs };
@@ -347,13 +351,19 @@ export class Bay {
     group.name = 'bay';
     this.land = terrain();
     group.add(this.land);
+    // the boreen and the footpaths worn into it
+    this.paths = buildPaths(this);
+    group.add(this.paths);
 
     // the sea: rings about the tower, finer near, coloured from the palette near → far
     this.sea = this.makeSea();
     group.add(this.sea);
+    // surf against the rock and the shallows round the shore
+    this.shore = buildShore();
+    group.add(this.shore);
 
     // stacks
-    const rockM = wash({ color: '#9C8B7A', color2: '#837466', line: 1, crease: 0.6, gran: 1, world: true, noiseScale: 0.12 });
+    const rockM = wash({ color: '#928C83', color2: '#77716A', line: 1, crease: 0.6, gran: 1, world: true, noiseScale: 0.12 });
     const sb = new Builder(5);
     for (const s of STACKS) {
       const H = s.h * 10;
@@ -409,6 +419,14 @@ export class Bay {
     this.camPos = new THREE.Vector3();
   }
 
+  // the gorse, the heather and the boulders, kept off clear: circles [x, z, r] in world metres (the
+  // houses and the places, which are built after the bay)
+  addFlora(clear) {
+    if (this.flora) this.flora.removeFromParent();
+    this.flora = buildFlora(this, clear);
+    this.group.add(this.flora);
+  }
+
   // the height of the ground mesh itself (not the function it was sampled from) at world x, z
   groundAt(wx, wz) {
     const G = this.land.userData.grid;
@@ -462,6 +480,19 @@ export class Bay {
       t.setXYZ(k, c.r, c.g, c.b);
     }
     t.needsUpdate = true;
+    // the shore's band: the sea's colour at its outer edge, going green over the shallows, surf at the rock
+    const st = this.shore.geometry.attributes.tint, meta = this.shore.userData.meta;
+    // (by night the surf is only a paler sea, not white paint)
+    const fh = far.getHex();
+    const dark = 1 - smooth(0.4, 0.6, ((fh >> 16) * 0.3 + ((fh >> 8) & 255) * 0.59 + (fh & 255) * 0.11) / 255);
+    const shoal = new THREE.Color(P.seaShallow || P.seaMid), surf = new THREE.Color('#F1F2EE').lerp(far, 0.12 + dark * 0.5);
+    for (let k = 0; k < st.count; k++) {
+      const r = meta[k * 3 + 2];
+      c.copy(near).lerp(mid, smooth(60, 380, r)).lerp(far, smooth(380, 1500, r));
+      c.lerp(shoal, meta[k * 3 + 1] * 0.75).lerp(surf, meta[k * 3]);
+      st.setXYZ(k, c.r, c.g, c.b);
+    }
+    st.needsUpdate = true;
     this.shallowM.uniforms.uColor.value.copy(mid).lerp(far, 0.45);
     this.shallowM.uniforms.uColor2.value.copy(mid).lerp(far, 0.3);
     this.palette = P;
@@ -653,6 +684,7 @@ export class Bay {
     this.night = night;
     this.tide = TIDE[night.tide] ?? 0;
     this.sea.position.y = this.tide;
+    this.shore.position.y = this.tide;
     const on = new Set(night.reefs || []);
     for (const [id, R] of Object.entries(this.reefs)) {
       R.group.visible = on.has(id) && id !== 'newrock';

@@ -60,6 +60,10 @@ out vec3 vObj;
 in vec4 tint;      // per-vertex pigment multiplier; a = where ink stains gather
 out vec4 vTint;
 #endif
+#ifdef USE_FLORA
+in vec4 flora;     // how thick each of the four flowers grows here (see uFl0..3)
+out vec4 vFlora;
+#endif
 #ifdef USE_SKIN
 in vec4 skin;      // x: mm along a finger (wrinkles run across it), y: knuckle wrinkles, z: crepe, w: nail
 out vec4 vSkin;
@@ -68,6 +72,9 @@ out vec3 vRest;
 void main() {
   #ifdef USE_TINT
     vTint = tint;
+  #endif
+  #ifdef USE_FLORA
+    vFlora = flora;
   #endif
   #ifdef USE_SKIN
     vSkin = skin;
@@ -110,6 +117,11 @@ in vec4 vTint;
 uniform vec3 uStainCol;
 uniform float uStain;
 #endif
+#ifdef USE_FLORA
+in vec4 vFlora;
+uniform vec3 uFl0, uFl1, uFl2, uFl3;
+uniform vec4 uFlFreq, uFlSize;
+#endif
 #ifdef USE_SKIN
 in vec4 vSkin;
 in vec3 vRest;
@@ -136,6 +148,49 @@ uniform float uLampAmt, uLampFall, uRimAmt;
 uniform float uFogDensity, uFogNear, uFogHeight;
 uniform float uTurbAmt;
 ${NOISE_GLSL}
+#ifdef USE_FLORA
+// Flowers as dabs of pigment: one dab at most in each cell of a lattice laid on the surface (on whichever
+// plane it faces most nearly), kept where the cell's lot falls under how thick the flower grows; where it
+// grows thick, a second lattice half a cell over fills the gaps. Far off, where the dabs would sparkle,
+// they melt into the colour they average to, so a drift of gorse reads as a yellow wash across a hill.
+float floraLattice(vec2 p, float pres, float rad, float seed, out float tone) {
+  // a dab may sit anywhere in its cell and is at most half a cell across, so only the four cells
+  // nearest the point can reach it
+  vec2 c0 = floor(p - 0.5);
+  float fw = length(fwidth(p));
+  float best = 0.0;
+  tone = 0.5;
+  for (int k = 0; k < 4; k++) {
+    vec2 c = c0 + vec2(float(k & 1), float(k >> 1));
+    vec3 c3 = vec3(c, seed * 13.0);
+    if (h31(c3 + seed) >= pres) continue;
+    vec2 j = c + vec2(h31(c3 + 1.7), h31(c3 + 3.1));
+    float rr = rad * (0.6 + 0.4 * h31(c3 + 7.7));
+    // a dab is never quite round
+    float a = h31(c3 + 5.3) * 6.2832;
+    vec2 q = mat2(cos(a), sin(a), -sin(a), cos(a)) * (p - j);
+    float d = length(q * vec2(1.0, 1.35));
+    float v = 1.0 - smoothstep(rr - fw * 0.6 - 0.02, rr + fw * 0.6, d);
+    if (v > best) { best = v; tone = h31(c3 + 9.1); }
+  }
+  return best;
+}
+vec3 floraDab(vec3 base, vec2 p, vec3 col, float pres, float freq, float rad, float seed) {
+  if (pres <= 0.002) return base;
+  p = p * freq + seed * 17.0;
+  float fw = length(fwidth(p));
+  float mean = (min(pres * 2.0, 1.0) + max(pres * 2.0 - 1.0, 0.0)) * 1.6 * rad * rad;
+  float far = smoothstep(0.3, 0.85, fw);
+  float k = mean, t1 = 0.5, t2;
+  if (far < 1.0) {
+    float dab = floraLattice(p, pres * 2.0, rad, seed, t1);
+    // where it grows thick, a second lattice, turned and finer, fills the gaps without falling into a weave
+    if (pres > 0.5) dab = max(dab, floraLattice(mat2(0.62, 0.79, -0.79, 0.62) * p * 1.37 + 0.31, pres * 2.0 - 1.0, rad, seed + 0.5, t2) * (1.0 - dab));
+    k = mix(dab, mean, far);
+  }
+  return mix(base, col * (0.84 + 0.32 * t1), clamp(k, 0.0, 1.0));
+}
+#endif
 #ifdef USE_SKIN
 // fine lines across a coordinate (one per unit), thinned and faded where they would alias
 float skinLines(float ph, float width) {
@@ -162,6 +217,18 @@ void main() {
     // ink worked into the skin: patchy, darker in the grain
     float st = vTint.a * uStain * smoothstep(0.25, 0.65, fbm3d(vObj * 2.2 + 9.0) + vTint.a * 0.4);
     base = mix(base, uStainCol, clamp(st, 0.0, 0.85));
+  #endif
+  #ifdef USE_FLORA
+    // the flowers grow in clumps, thinner between
+    vec4 clump = vec4(vn3(vWorld * 0.5 + 3.0), vn3(vWorld * 0.42 + 8.0), vn3(vWorld * 0.7 + 1.0), vn3(vWorld * 0.6 + 5.0));
+    vec4 pres = clamp(vFlora * mix(vec4(0.25), vec4(1.6), smoothstep(vec4(0.3), vec4(0.7), clump)), 0.0, 1.0);
+    // the lattice lies on the plane the surface faces most nearly
+    vec3 an = abs(n);
+    vec2 fp = an.y > max(an.x, an.z) ? vWorld.xz : an.x > an.z ? vWorld.zy : vWorld.xy;
+    base = floraDab(base, fp, uFl0, pres.x, uFlFreq.x, uFlSize.x, 1.0);
+    base = floraDab(base, fp, uFl1, pres.y, uFlFreq.y, uFlSize.y, 2.0);
+    base = floraDab(base, fp, uFl2, pres.z, uFlFreq.z, uFlSize.z, 3.0);
+    base = floraDab(base, fp, uFl3, pres.w, uFlFreq.w, uFlSize.w, 4.0);
   #endif
 
   // light: a wrapped, softly banded value study. Shadow is a cooler, deeper glaze of the same pigment.
@@ -261,6 +328,8 @@ const col3 = (c) => (c instanceof THREE.Color ? c : new THREE.Color(c));
 //   world           take noise from world position (for big static scenery)
 //   tint            geometry carries a vec4 'tint' attribute (pigment multiplier, a = ink stain);
 //                   stain / stainCol set how much ink has gathered and its colour
+//   flora           geometry carries a vec4 'flora' attribute (how thick four flowers grow); flora is
+//                   { cols: [4 colours], freq: [dabs per metre], size: [dab radius, 0..0.5 of a cell] }
 //   skin            geometry carries a vec4 'skin' attribute (an old hand's wrinkles, crêpe and nails,
 //                   drawn as fine lines in wrinkleCol, scaled by wrinkle)
 export function wash(o = {}) {
@@ -269,7 +338,7 @@ export function wash(o = {}) {
     glslVersion: THREE.GLSL3,
     vertexShader: VERT,
     fragmentShader: FRAG,
-    defines: { ...(o.world ? { WORLD_NOISE: 1 } : {}), ...(o.tint ? { USE_TINT: 1 } : {}), ...(o.skin ? { USE_SKIN: 1 } : {}) },
+    defines: { ...(o.world ? { WORLD_NOISE: 1 } : {}), ...(o.tint ? { USE_TINT: 1 } : {}), ...(o.skin ? { USE_SKIN: 1 } : {}), ...(o.flora ? { USE_FLORA: 1 } : {}) },
     uniforms: {
       ...SHARED,
       uColor: { value: c },
@@ -296,6 +365,11 @@ export function wash(o = {}) {
       uStain: { value: o.stain ?? 0 },
       uWrinkleCol: { value: col3(o.wrinkleCol ?? '#4A3028') },
       uWrinkle: { value: o.wrinkle ?? 1 },
+      ...(o.flora ? {
+        uFl0: { value: col3(o.flora.cols[0]) }, uFl1: { value: col3(o.flora.cols[1]) },
+        uFl2: { value: col3(o.flora.cols[2]) }, uFl3: { value: col3(o.flora.cols[3]) },
+        uFlFreq: { value: new THREE.Vector4(...o.flora.freq) }, uFlSize: { value: new THREE.Vector4(...o.flora.size) },
+      } : {}),
     },
     side: o.side ?? THREE.FrontSide,
   });

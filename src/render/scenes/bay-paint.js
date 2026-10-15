@@ -14,7 +14,7 @@ export function palette(tod, cool = 0, golden = false) {
   if (tod === 'dusk' || tod === 'title') {
     Object.assign(P, {
       skyTop: '#55618F', skyMid: '#A98197', skyLow: '#E3A58E', skyHor: '#F4CF8C',
-      cloud: '#8E6F8E', cloudLit: '#F0B486', seaFar: '#C99A98', seaMid: '#6C7AA6', seaNear: '#3B5B8C',
+      cloud: '#8E6F8E', cloudLit: '#F0B486', seaFar: '#C99A98', seaMid: '#6C7AA6', seaNear: '#3B5B8C', seaShallow: '#5E7E9A',
       grassFar: '#8C8D6C', grassNear: '#617E46', rock: '#9A5E43', rockSh: '#5E4A55', ridge1: '#A790A6', ridge2: '#8C7D92',
       ww: '#F3E2CC', wwSh: '#A89AB4', roof: '#4A4458', dark: 0.22, sun: { x: 196, y: HORIZON - 34, r: 24, c: '#FCE6AE' },
       glitter: '#F7D49A', wave: '#2F4878',
@@ -23,14 +23,14 @@ export function palette(tod, cool = 0, golden = false) {
   } else if (tod === 'night') {
     Object.assign(P, {
       skyTop: '#222A4C', skyMid: '#303A64', skyLow: '#4A5480', skyHor: '#6E7294',
-      cloud: '#3A4268', cloudLit: '#6A7096', seaFar: '#56608A', seaMid: '#334070', seaNear: '#232E52',
+      cloud: '#3A4268', cloudLit: '#6A7096', seaFar: '#56608A', seaMid: '#334070', seaNear: '#232E52', seaShallow: '#2E4466',
       grassFar: '#2F3A3C', grassNear: '#25322B', rock: '#453A40', rockSh: '#232230', ridge1: '#454B70', ridge2: '#363C5E',
       ww: '#A3A6B8', wwSh: '#5C607A', roof: '#1E1F2C', dark: 0.7, sun: null, glitter: '#7C83A8', wave: '#161D33',
     });
   } else if (tod === 'dawn') {
     Object.assign(P, {
       skyTop: '#7E95B8', skyMid: '#C5B9C2', skyLow: '#EED3B6', skyHor: '#F6E3B8',
-      cloud: '#B69CA8', cloudLit: '#F5D3A6', seaFar: '#D3C3BC', seaMid: '#8D9DB8', seaNear: '#4F6A96',
+      cloud: '#B69CA8', cloudLit: '#F5D3A6', seaFar: '#D3C3BC', seaMid: '#8D9DB8', seaNear: '#4F6A96', seaShallow: '#6E98A6',
       grassFar: '#97A08A', grassNear: '#6E8A55', rock: '#A0745C', rockSh: '#6E6070', ridge1: '#B4AFC0', ridge2: '#9F9BAE',
       ww: '#F4ECDD', wwSh: '#B0AEC0', roof: '#5A5866', dark: 0.12, sun: { x: 1480, y: HORIZON - 40, r: 20, c: '#FBEBC0' },
       glitter: '#F6E2B4', wave: '#3D5482',
@@ -38,7 +38,7 @@ export function palette(tod, cool = 0, golden = false) {
   } else if (tod === 'lastsunset') {
     Object.assign(P, {
       skyTop: '#6E7896', skyMid: '#9C93A3', skyLow: '#F0B356', skyHor: '#F7CB6A',
-      cloud: '#5D5F78', cloudLit: '#E7A24E', seaFar: '#C9A06A', seaMid: '#6E7590', seaNear: '#3E4A6C',
+      cloud: '#5D5F78', cloudLit: '#E7A24E', seaFar: '#C9A06A', seaMid: '#6E7590', seaNear: '#3E4A6C', seaShallow: '#56707E',
       grassFar: '#7D7C68', grassNear: '#5A6A48', rock: '#8E6248', rockSh: '#4D4552', ridge1: '#8C8496', ridge2: '#787287',
       ww: '#F2E0C4', wwSh: '#9890A8', roof: '#3F3C4E', dark: 0.25, sun: { x: 230, y: HORIZON - 14, r: 26, c: '#FFE6A0' },
       glitter: '#FBD47E', wave: '#2E3A5E',
@@ -46,7 +46,7 @@ export function palette(tod, cool = 0, golden = false) {
   } else { // afternoon
     Object.assign(P, {
       skyTop: '#7598C2', skyMid: '#A9C2D6', skyLow: '#DCE3DE', skyHor: '#EFEADA',
-      cloud: '#C8CDD6', cloudLit: '#F8F4EA', seaFar: '#AFC3CF', seaMid: '#6F8FB3', seaNear: '#3B5B8C',
+      cloud: '#C8CDD6', cloudLit: '#F8F4EA', seaFar: '#AFC3CF', seaMid: '#6F8FB3', seaNear: '#3B5B8C', seaShallow: '#4E95A0',
       grassFar: '#97A47A', grassNear: '#6B8E4E', rock: '#A8714E', rockSh: '#7A6870', ridge1: '#AEB8C8', ridge2: '#97A3B2',
       ww: '#F6F0E4', wwSh: '#B9B6C4', roof: '#56596A', dark: 0.0, sun: null, glitter: '#F4F0E2', wave: '#36558A',
     });
