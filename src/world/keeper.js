@@ -1231,6 +1231,10 @@ export class Keeper {
     this.lit = Math.max(0, this.lit - dt * 0.4);
     if (this.fly) this.flyCam(dt);
     this.applyCamera();
+    // what moves in the places by day (Nora, the shop bell); they watch the keeper, not the free-fly camera
+    if (this.mode === 'day' && this.headland.group.visible) {
+      this.headland.update(dt, { night: this.night, eye: this.walker.eyePose().pos, reading: this.reading, audio: g.audio });
+    }
     this.updateHands(dt);
     this.updateClock();
     this.bay.update(dt, this.world.camera, this.bayView());

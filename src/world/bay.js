@@ -60,8 +60,21 @@ export function shoreDist(x, y) {
   return d;
 }
 
+// Nora's shop in Port na Rón (places/shop.js) is cut into the slope: the ground under it is levelled
+// down to the street at its door, as the tower's is, so its floor is at the street and the hill rises
+// behind it.
+const SHOP_PAD = { x: 72.5, y: 1.4, r0: 1.6, r1: 2.6, at: [72.5, 0.45], h: null };
+
 // height of the ground (m above mid-tide) at a chart point
 export function landHeight(x, y) {
+  const h = rawHeight(x, y), P = SHOP_PAD;
+  const d = Math.hypot(x - P.x, y - P.y);
+  if (d > P.r1) return h;
+  P.h ??= rawHeight(...P.at) + 0.2;
+  return lerp(Math.min(h, P.h), h, smooth(P.r0, P.r1, d));
+}
+
+function rawHeight(x, y) {
   const inN = pointInPoly(x, y, LAND.north), inS = pointInPoly(x, y, LAND.south);
   const d = inN || inS ? shoreDist(x, y) : -shoreDist(x, y);
   if (d < 0) return Math.max(-7, -1.4 + d * 2.2);

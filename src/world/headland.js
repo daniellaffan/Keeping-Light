@@ -49,6 +49,12 @@ export class Headland {
 
   place(id) { return this.places.find((p) => p.id === id); }
 
+  // by day, every frame: a place file may export update(dt, ctx) for whatever moves there (people, a
+  // bell). ctx is { night, eye (the camera, world), reading (the keeper's panel, or null), audio }.
+  update(dt, ctx) {
+    for (const pl of this.places) pl.P.update?.(dt, ctx);
+  }
+
   // ---------------- where you can stand ----------------
   ground(x, z) {
     return this.insideTower(x, z) ? this.k.roomFloor(x, z) : Math.max(this.bay.groundAt(x, z), this.bay.tide + 0.3);

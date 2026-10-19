@@ -141,6 +141,12 @@ export class Sfx {
     o.start(t + 0.15); o.stop(t + 1.6);
   }
 
+  // the shop bell over the door: a small brass bell on a spring, a few quick strikes dying away
+  shopBell() {
+    const t = this.now;
+    [0, 0.13, 0.24, 0.36, 0.52].forEach((d, i) => bell(this.ctx, this.steps, 98 + (i % 2) * 2, t + d, { vel: 0.13 * Math.pow(0.72, i), dur: 1.4 }));
+  }
+
   // one held note as the paint goes back into the paper
   heldNote() {
     const ctx = this.ctx, t = this.now;
