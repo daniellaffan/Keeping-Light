@@ -728,3 +728,73 @@ Screenshots:
 * The shoulder has no range in the table, and the body is not modelled.
 * Penetration in the autoplayed night is measured every fifth frame (every frame in the scripted dusk).
 * How natural a pose looks, and frame time on a real GPU or phone.
+
+## Nora (people, the first of three)
+
+Nora Ó Sé now stands just inside the door of her shop in Port na Rón. She is drawn in code, in the
+same wash as everything else, and the shop has a real front so there is a doorway for her to stand in.
+
+**The shop** (`src/world/places/shop.js`).
+* A whitewashed house with a slate roof and an oxblood shopfront: pilasters, a fascia with "N. Ó Sé,
+  Grocer" signwritten in serif, a twelve-pane window, a door standing open inward, a stone step and a
+  bench under the window (for Tadhg, later).
+* Inside, just enough to be seen through the door and window: the counter, four shelves of goods, jars
+  in the window, bread and paper bags on the counter, a dark doorway to the back room.
+* A brass bell on a bracket over the door. It swings and rings (`sfx.shopBell`) when the shop's
+  vignette starts, on nights before 13.
+* **The ground is levelled under it.** The slope there put grass through the floor or left a 1.4 m
+  plinth, so `bay.landHeight` now flattens a small pad (2.6 m radius, blended) under the shop. Nothing
+  else on the map moves.
+* From night 13 the shelves and window are bare.
+
+**The figure** (`src/world/people/figure.js`), shared so Tadhg and Síle can follow.
+* Shape helpers (`lathe`, `limb`, `blob`), a small skeleton (hips, chest, neck, two arms of shoulder,
+  elbow and wrist), named arm poses mirrored left to right, and critically damped springs on every joint.
+* Every frame: the arms ease toward the current pose plus any gesture laid over it (a nod, a hand
+  offered); the chest breathes; the weight shifts from foot to foot every 5–9 s; and the look is shared
+  out, the chest taking up to 25° and the head the rest within the neck's limits (±60° turn, -20° to
+  +29° tilt). The head moves faster than the chest, so the head leads and the shoulders follow.
+* A `slow` factor stretches all of it, for the later nights.
+
+**Nora** (`src/world/people/nora.js`).
+* Grey hair pinned up in a bun, a broad face with soft wind-reddened cheeks and only shading for eyes
+  and brows (the "soft and simple" face), a moss cardigan with its sleeves pushed up over a blouse, a
+  faded sprig-print wraparound pinafore over a dark skirt, thick stockings, black lace-ups and a striped
+  tea towel over her shoulder. The face and print are small canvas textures.
+* **Idle:** hands folded, breathing, weight shifting, and every 9–16 s she wipes her hands for a moment.
+* **Noticing:** within 10 m she turns to you after half a second, head first, and lets you go a couple
+  of seconds after you leave.
+* **Reading:** she faces you throughout; on each of her lines she nods or offers a hand, and on lines
+  about change she holds out her hand twice.
+* **By night:** see the table. `stage(n)` holds it in one place.
+
+| Nights | Nora |
+|---|---|
+| 2–7 | In the doorway, warm, quick to notice you |
+| 8–10 | Slower (×1.4–1.8), takes almost two seconds to notice you, and every 7–12 s looks past you out to sea for a few seconds (not while she's speaking) |
+| 11 | **Not shown.** That afternoon is the pub, and she speaks there, so the shop doorway is empty rather than having her in two places at once |
+| 12 | Behind the counter, seen through the window, head down, leaning on it, not turning |
+| 13 on | Gone; the shelves are bare. Night 15 is the empty doorway |
+
+On nights when the village isn't one of the afternoon's places she isn't drawn at all.
+
+**The hook.** A place file may now export `update(dt, ctx)`; `Headland.update` calls each one, with
+`ctx = { night, eye, reading, audio }`. It is called from `Keeper.update()`, by day and only while the
+headland is shown, not from `updateDay`, because `updateDay` doesn't run while a vignette is being read,
+and that is when Nora most needs to move. `village.js` uses it for Nora and the bell.
+
+**Screenshots.**
+* [From the lane as you arrive](docs/screenshots/46-nora-from-the-lane.jpg) (night 2)
+* [While reading](docs/screenshots/47-nora-while-reading.jpg) (night 2)
+* [Close up, free-fly](docs/screenshots/48-nora-close.jpg)
+* [Night 10](docs/screenshots/49-nora-night10.jpg), [night 12, behind the counter](docs/screenshots/50-nora-night12.jpg),
+  [night 15, empty](docs/screenshots/51-nora-night15-empty.jpg)
+
+**Still rough.**
+* The face is plain, by choice, but close up it is near a doll's: a smooth ball with painted shading.
+* Her hands are mittens with a thumb; at reading distance that's fine, close up it isn't.
+* The cloth is rigid. The pinafore and skirt follow the hips but don't swing.
+* On night 12 she is only visible through the window, not from the doorway itself.
+* The pub across the lane is still a greybox.
+
+**Checks.** `node tools/check-nights.mjs` passes. By day at the shop the frame rate is unchanged: 60 fps with Nora shown or hidden (median 16.7 ms a frame, 90th percentile 17.3 ms, in the desktop app's browser pane).
